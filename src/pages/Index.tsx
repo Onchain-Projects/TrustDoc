@@ -1,0 +1,164 @@
+import { useState } from "react";
+import { Header } from "@/components/layout/Header";
+import { Footer } from "@/components/layout/Footer";
+import { HomePage } from "@/pages/HomePage";
+import { VerifyPage } from "@/pages/VerifyPage";
+import { RegisterPage } from "@/pages/RegisterPage";
+import { DashboardPage } from "@/pages/DashboardPage";
+import { IssueDocumentPage } from "@/pages/IssueDocumentPage";
+import { ProfilePage } from "@/pages/ProfilePage";
+import { OwnerDashboardPage } from "@/pages/OwnerDashboardPage";
+import { UploadModal } from "@/components/ui/upload-modal";
+import { ToastNotifications, useToasts } from "@/components/ui/toast-notifications";
+import { useAuthContext } from "@/contexts/AuthContext";
+
+const Index = () => {
+  const [currentPage, setCurrentPage] = useState('home');
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [uploadStage, setUploadStage] = useState<'building' | 'anchoring' | 'complete'>('building');
+  const { toasts, removeToast, showSuccess, showError, showInfo } = useToasts();
+  
+  // Use the authentication context
+  const { user, profile, userType, loading: authLoading } = useAuthContext();
+  const isLoggedIn = !!user;
+
+  const handleNavigation = (page: string) => {
+    setCurrentPage(page);
+  };
+
+  const handleLogin = (userData?: any) => {
+    // Navigate based on user type
+    if (userType === 'owner') {
+      setCurrentPage('owner-dashboard');
+      showSuccess('Login successful', 'Welcome back to TrustDoc!');
+    } else {
+      setCurrentPage('dashboard');
+      showSuccess('Login successful', 'Welcome back to TrustDoc!');
+    }
+  };
+
+  const handleRegister = (userData: any) => {
+    // Navigate based on user type
+    if (userData.userType === 'owner') {
+      setCurrentPage('owner-dashboard');
+      showSuccess('Registration successful', 'Your owner account has been created');
+    } else {
+      setCurrentPage('dashboard');
+      showSuccess('Registration successful', 'Your issuer account has been created');
+    }
+  };
+
+  const handleLogout = () => {
+    setCurrentPage('home');
+    showInfo('Logged out', 'You have been successfully logged out');
+  };
+
+  const handleUpload = () => {
+    setShowUploadModal(true);
+    setUploadStage('building');
+    
+    // Simulate upload process
+    setTimeout(() => {
+      setUploadStage('anchoring');
+      
+      setTimeout(() => {
+        setUploadStage('complete');
+        showSuccess('Documents uploaded successfully', 'Your documents have been anchored to the Polygon blockchain');
+        
+        setTimeout(() => {
+          setShowUploadModal(false);
+        }, 2000);
+      }, 3000);
+    }, 2000);
+  };
+
+  const renderCurrentPage = () => {
+    switch (currentPage) {
+      case 'verify':
+        return (
+          <VerifyPage 
+            onVerify={() => showInfo('Verification started', 'Processing document verification...')}
+            onManualVerify={() => showInfo('Manual verification started', 'Checking signature on blockchain...')}
+          />
+        );
+      case 'register':
+        return <RegisterPage onLogin={handleRegister} />;
+      case 'login':
+        return <RegisterPage onLogin={handleLogin} />;
+      case 'dashboard':
+        return isLoggedIn ? (
+          <DashboardPage 
+            onNavigate={handleNavigation}
+            issuerName={profile?.name || "Demo Issuer"}
+            issuerId={profile?.issuer_id || "demo123"}
+            publicKey={profile?.public_key || "0x1234...abcd"}
+            onUpload={handleUpload}
+          />
+        ) : (
+          <HomePage onNavigate={handleNavigation} />
+        );
+      case 'issue':
+        return isLoggedIn ? (
+          <IssueDocumentPage />
+        ) : (
+          <HomePage onNavigate={handleNavigation} />
+        );
+      case 'profile':
+        return isLoggedIn ? (
+          <ProfilePage onLogout={handleLogout} />
+        ) : (
+          <HomePage onNavigate={handleNavigation} />
+        );
+      case 'owner-dashboard':
+        return isLoggedIn && userType === 'owner' ? (
+          <OwnerDashboardPage />
+        ) : (
+          <HomePage onNavigate={handleNavigation} />
+        );
+      default:
+        return <HomePage onNavigate={handleNavigation} />;
+    }
+  };
+
+  // Show loading state while authentication is being checked
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-muted-foreground">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="min-h-screen bg-background flex flex-col">
+        <Header 
+          currentPage={currentPage}
+          onNavigate={handleNavigation}
+          isLoggedIn={isLoggedIn}
+          userType={userType || 'issuer'}
+          onLogout={handleLogout}
+        />
+        <main className="flex-1">
+          {renderCurrentPage()}
+        </main>
+        <Footer />
+      </div>
+
+      {/* Upload Modal */}
+      <UploadModal 
+        isOpen={showUploadModal} 
+        onClose={() => setShowUploadModal(false)}
+        stage={uploadStage}
+      />
+
+      {/* Toast Notifications */}
+      <ToastNotifications toasts={toasts} onRemove={removeToast} />
+    </>
+  );
+};
+
+export default Index;

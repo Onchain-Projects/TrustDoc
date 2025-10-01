@@ -1,0 +1,26 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "dist"
+      }
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "/index.html"
+    }
+  ],
+  "env": {
+    "VITE_SUPABASE_URL": "@vite_supabase_url",
+    "VITE_SUPABASE_ANON_KEY": "@vite_supabase_anon_key",
+    "VITE_SUPABASE_SERVICE_ROLE_KEY": "@vite_supabase_service_role_key",
+    "VITE_CONTRACT_ADDRESS": "@vite_contract_address",
+    "VITE_ALCHEMY_RPC_URL": "@vite_alchemy_rpc_url",
+    "VITE_PRIVATE_KEY": "@vite_private_key"
+  }
+}
