@@ -25,8 +25,7 @@ export const useAuth = () => {
       try {
         const user = await authService.getCurrentUser()
         if (user) {
-          const userType = user.user_metadata?.user_type || 'issuer'
-          const profile = await authService.getUserProfile(user.id, userType)
+          const { profile, userType } = await authService.getUserProfile(user.id)
           
           setAuthState({
             user: user as AuthUser,
@@ -61,8 +60,7 @@ export const useAuth = () => {
     const { data: { subscription } } = authService.onAuthStateChange(async (user) => {
       if (user) {
         try {
-          const userType = user.user_metadata?.user_type || 'issuer'
-          const profile = await authService.getUserProfile(user.id, userType)
+          const { profile, userType } = await authService.getUserProfile(user.id)
           
           setAuthState({
             user,
@@ -112,6 +110,29 @@ export const useAuth = () => {
     
     try {
       const result = await authService.signIn(data)
+      
+      // After successful sign in, fetch user profile to get userType
+      if (result.user) {
+        try {
+          const { profile, userType } = await authService.getUserProfile(result.user.id)
+          
+          setAuthState(prev => ({
+            ...prev,
+            user: result.user as AuthUser,
+            profile,
+            userType,
+            loading: false,
+            error: null
+          }))
+          
+          return { ...result, userType, profile }
+        } catch (profileError) {
+          console.error('Error fetching profile after sign in:', profileError)
+          // Still return the auth result even if profile fetch fails
+          return result
+        }
+      }
+      
       return result
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Sign in failed'

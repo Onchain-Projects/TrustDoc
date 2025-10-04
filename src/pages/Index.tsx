@@ -19,16 +19,18 @@ const Index = () => {
   const { toasts, removeToast, showSuccess, showError, showInfo } = useToasts();
   
   // Use the authentication context
-  const { user, profile, userType, loading: authLoading } = useAuthContext();
+  const { user, profile, userType, loading: authLoading, signOut } = useAuthContext();
   const isLoggedIn = !!user;
 
   const handleNavigation = (page: string) => {
     setCurrentPage(page);
   };
 
-  const handleLogin = (userData?: any) => {
-    // Navigate based on user type
-    if (userType === 'owner') {
+  const handleLogin = async (loginResult?: any) => {
+    // Navigate based on user type from the login result or current auth state
+    const detectedUserType = loginResult?.userType || userType;
+    
+    if (detectedUserType === 'owner') {
       setCurrentPage('owner-dashboard');
       showSuccess('Login successful', 'Welcome back to TrustDoc!');
     } else {
@@ -48,9 +50,15 @@ const Index = () => {
     }
   };
 
-  const handleLogout = () => {
-    setCurrentPage('home');
-    showInfo('Logged out', 'You have been successfully logged out');
+  const handleLogout = async () => {
+    try {
+      await signOut();
+      setCurrentPage('home');
+      showInfo('Logged out', 'You have been successfully logged out');
+    } catch (error) {
+      console.error('Logout error:', error);
+      showError('Logout failed', 'Please try again');
+    }
   };
 
   const handleUpload = () => {

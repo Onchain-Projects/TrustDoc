@@ -46,6 +46,13 @@ export interface Issuer {
   public_key: string
   private_key: string
   meta_mask_address: string
+  is_approved: boolean
+  approved_by?: string
+  approval_date?: string
+  approval_notes?: string
+  blockchain_address?: string
+  blockchain_registration_tx?: string
+  worker_addition_tx?: string
   created_at: string
   updated_at: string
 }
@@ -56,8 +63,30 @@ export interface Owner {
   password: string
   address: string
   name: string
+  auth_user_id?: string // Link to auth.users table
   created_at: string
   updated_at: string
+}
+
+export interface OwnerVerification {
+  id: string
+  owner_id: string
+  document_hash: string
+  merkle_root: string
+  verification_result: boolean
+  verification_date: string
+  issuer_id?: string
+  document_name?: string
+  verification_method: 'qr_code' | 'manual' | 'file_upload'
+}
+
+export interface IssuerApprovalHistory {
+  id: string
+  issuer_id: string
+  owner_id: string
+  action: 'approve' | 'reject'
+  approval_notes?: string
+  created_at: string
 }
 
 export interface Proof {

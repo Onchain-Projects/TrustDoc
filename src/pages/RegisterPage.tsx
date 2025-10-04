@@ -85,7 +85,7 @@ export const RegisterPage = ({ onRegister, onLogin }: RegisterPageProps) => {
         metaMaskAddress: walletAddress
       });
 
-      setRegistrationMessage("Registration successful! Please check your email for verification.");
+      setRegistrationMessage("Registration successful! Your account is pending owner approval. You will be notified once approved.");
       
       // Call the original callback if provided
       if (onRegister) {
@@ -106,7 +106,7 @@ export const RegisterPage = ({ onRegister, onLogin }: RegisterPageProps) => {
       clearError();
       setLoginMessage("");
       
-      await signIn({
+      const loginResult = await signIn({
         email: loginEmail,
         password: loginPassword
       });
@@ -115,7 +115,7 @@ export const RegisterPage = ({ onRegister, onLogin }: RegisterPageProps) => {
       
       // Call the original callback if provided
       if (onLogin) {
-        onLogin({ email: loginEmail, password: loginPassword });
+        onLogin(loginResult);
       }
     } catch (error) {
       setLoginMessage(error instanceof Error ? error.message : "Login failed");
@@ -128,10 +128,10 @@ export const RegisterPage = ({ onRegister, onLogin }: RegisterPageProps) => {
         {/* Header */}
         <div className="text-center mb-8">
           <h1 className="text-3xl md:text-4xl font-bold text-foreground mb-4">
-            Issuer Portal
+            TrustDoc Portal
           </h1>
           <p className="text-lg text-muted-foreground">
-            Create your issuer account or login to start using TrustDoc
+            Create your account or login to start using TrustDoc
           </p>
         </div>
 

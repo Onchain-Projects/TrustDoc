@@ -14,40 +14,140 @@ export const CONTRACT_CONFIG = {
 // TrustDoc Smart Contract ABI
 export const TRUSTDOC_ABI = [
   // Access Control
-  "function addWorker(address addr) public onlyOwner",
-  "function isWorker(address addr) public view returns (bool)",
-  "function getWorkers() public view returns (address[] memory)",
+  {
+    "inputs": [{"internalType": "address", "name": "addr", "type": "address"}],
+    "name": "addWorker",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [{"internalType": "address", "name": "addr", "type": "address"}],
+    "name": "isWorker",
+    "outputs": [{"internalType": "bool", "name": "", "type": "bool"}],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "getWorkers",
+    "outputs": [{"internalType": "address[]", "name": "", "type": "address[]"}],
+    "stateMutability": "view",
+    "type": "function"
+  },
   
   // Issuer Management
-  "function registerIssuer(string memory issuerId, address pubKey, string memory name) public onlyOwner",
-  "function getIssuerDetails(string memory issuerId) public view returns (string memory, string memory, IssuerPubKey[] memory)",
+  {
+    "inputs": [
+      {"internalType": "string", "name": "issuerId", "type": "string"},
+      {"internalType": "address", "name": "pubKey", "type": "address"},
+      {"internalType": "string", "name": "name", "type": "string"}
+    ],
+    "name": "registerIssuer",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [{"internalType": "string", "name": "issuerId", "type": "string"}],
+    "name": "getIssuerDetails",
+    "outputs": [
+      {"internalType": "string", "name": "", "type": "string"},
+      {"internalType": "string", "name": "", "type": "string"},
+      {"internalType": "address[]", "name": "", "type": "address[]"}
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
   
   // Merkle Root Management
-  "function putRoot(bytes32 merkleRoot) public onlyWorker",
-  "function getRootTimestamp(bytes32 root) public view returns (uint256)",
+  {
+    "inputs": [{"internalType": "bytes32", "name": "merkleRoot", "type": "bytes32"}],
+    "name": "putRoot",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [{"internalType": "bytes32", "name": "root", "type": "bytes32"}],
+    "name": "getRootTimestamp",
+    "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+    "stateMutability": "view",
+    "type": "function"
+  },
   
   // Document Invalidation
-  "function invalidateDocument(bytes32 docHash, bytes memory signature, string memory issuerId) public onlyOwner",
-  "function invalidateRoot(bytes32 rootHash, bytes memory signature, string memory issuerId) public onlyOwner",
-  "function invalidateTimeWindow(string memory issuerId, uint256 startTime, uint256 endTime, bytes memory signature) public onlyOwner",
+  {
+    "inputs": [
+      {"internalType": "bytes32", "name": "docHash", "type": "bytes32"},
+      {"internalType": "bytes", "name": "signature", "type": "bytes"},
+      {"internalType": "string", "name": "issuerId", "type": "string"}
+    ],
+    "name": "invalidateDocument",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {"internalType": "bytes32", "name": "rootHash", "type": "bytes32"},
+      {"internalType": "bytes", "name": "signature", "type": "bytes"},
+      {"internalType": "string", "name": "issuerId", "type": "string"}
+    ],
+    "name": "invalidateRoot",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
   
   // Verification
-  "function isInvalidated(bytes32 docHash, bytes32 rootHash, string memory issuerId, uint256 invExpiry, uint256 issuedAt) public view returns (string memory, uint256)",
+  {
+    "inputs": [
+      {"internalType": "bytes32", "name": "docHash", "type": "bytes32"},
+      {"internalType": "bytes32", "name": "rootHash", "type": "bytes32"},
+      {"internalType": "string", "name": "issuerId", "type": "string"},
+      {"internalType": "uint256", "name": "invExpiry", "type": "uint256"},
+      {"internalType": "uint256", "name": "issuedAt", "type": "uint256"}
+    ],
+    "name": "isInvalidated",
+    "outputs": [
+      {"internalType": "string", "name": "", "type": "string"},
+      {"internalType": "uint256", "name": "", "type": "uint256"}
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
   
   // Events
-  "event IssuerRegistered(string issuerId, string name, address indexed wallet)",
-  "event RootAdded(bytes32 root, uint256 timestamp)",
-  "event DocumentInvalidated(bytes32 docHash, string issuerId, uint256 timestamp)",
-  "event RootInvalidated(bytes32 rootHash, string issuerId, uint256 timestamp)",
-  
-  // Modifiers
-  "modifier onlyOwner()",
-  "modifier onlyWorker()"
+  {
+    "anonymous": false,
+    "inputs": [
+      {"indexed": false, "internalType": "string", "name": "issuerId", "type": "string"},
+      {"indexed": false, "internalType": "string", "name": "name", "type": "string"},
+      {"indexed": true, "internalType": "address", "name": "wallet", "type": "address"}
+    ],
+    "name": "IssuerRegistered",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {"indexed": false, "internalType": "bytes32", "name": "root", "type": "bytes32"},
+      {"indexed": false, "internalType": "uint256", "name": "timestamp", "type": "uint256"}
+    ],
+    "name": "RootAdded",
+    "type": "event"
+  }
 ]
 
 // Contract Instance Factory
 export function getContractInstance(useOwner = false) {
-  const provider = new ethers.JsonRpcProvider(CONTRACT_CONFIG.network.rpcUrl)
+  // Create provider with explicit network configuration to avoid ENS resolution
+  const provider = new ethers.JsonRpcProvider(CONTRACT_CONFIG.network.rpcUrl, {
+    name: 'polygon-amoy',
+    chainId: CONTRACT_CONFIG.network.chainId,
+    ensAddress: null // Explicitly disable ENS
+  })
   
   if (useOwner) {
     const privateKey = import.meta.env.VITE_PRIVATE_KEY

@@ -96,7 +96,10 @@ export class CryptographicKeyService {
    */
   private static generateKeyId(): string {
     const timestamp = Date.now().toString(36)
-    const random = crypto.randomBytes(8).toString('hex')
+    // Use Web Crypto API for browser compatibility
+    const randomArray = new Uint8Array(8)
+    crypto.getRandomValues(randomArray)
+    const random = Array.from(randomArray, byte => byte.toString(16).padStart(2, '0')).join('')
     return `key_${timestamp}_${random}`
   }
 

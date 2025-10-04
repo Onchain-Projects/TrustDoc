@@ -81,6 +81,7 @@ export const authService = {
             key_size: keyPair.keySize,
             key_created_at: keyPair.createdAt.toISOString(),
             is_key_active: true,
+            is_approved: false, // New issuers require owner approval
           })
 
         if (issuerError) throw issuerError
@@ -132,15 +133,43 @@ export const authService = {
     return user
   },
 
-  // Get user profile data
-  async getUserProfile(userId: string, userType: 'issuer' | 'owner') {
-    if (userType === 'issuer') {
-      // First try to get the user's email from auth
-      const { data: authUser } = await supabase.auth.getUser()
-      if (!authUser.user?.email) {
-        throw new Error('User email not found')
+  // Get user profile data with auto-detection
+  async getUserProfile(userId: string, userType?: 'issuer' | 'owner') {
+    // First try to get the user's email from auth
+    const { data: authUser } = await supabase.auth.getUser()
+    if (!authUser.user?.email) {
+      throw new Error('User email not found')
+    }
+
+    // If userType is not specified, try to auto-detect
+    if (!userType) {
+      // First try as owner
+      const { data: ownerData, error: ownerError } = await supabase
+        .from('owners')
+        .select('*')
+        .eq('email', authUser.user.email)
+        .single()
+
+      if (!ownerError && ownerData) {
+        return { profile: ownerData as Owner, userType: 'owner' as const }
       }
 
+      // If not owner, try as issuer
+      const { data: issuerData, error: issuerError } = await supabase
+        .from('issuers')
+        .select('*')
+        .eq('email', authUser.user.email)
+        .single()
+
+      if (!issuerError && issuerData) {
+        return { profile: issuerData as Issuer, userType: 'issuer' as const }
+      }
+
+      throw new Error('User profile not found in either owners or issuers table')
+    }
+
+    // If userType is specified, use it
+    if (userType === 'issuer') {
       const { data, error } = await supabase
         .from('issuers')
         .select('*')
@@ -151,14 +180,8 @@ export const authService = {
         console.error('Error fetching issuer profile:', error)
         throw error
       }
-      return data as Issuer
+      return { profile: data as Issuer, userType: 'issuer' as const }
     } else {
-      // First try to get the user's email from auth
-      const { data: authUser } = await supabase.auth.getUser()
-      if (!authUser.user?.email) {
-        throw new Error('User email not found')
-      }
-
       const { data, error } = await supabase
         .from('owners')
         .select('*')
@@ -169,7 +192,7 @@ export const authService = {
         console.error('Error fetching owner profile:', error)
         throw error
       }
-      return data as Owner
+      return { profile: data as Owner, userType: 'owner' as const }
     }
   },
 

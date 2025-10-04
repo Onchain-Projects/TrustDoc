@@ -13,8 +13,10 @@ import {
   Shield, 
   CheckCircle, 
   ArrowLeft,
+  Clock,
   Upload,
-  Layers
+  Layers,
+  AlertTriangle
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { QRCodeGenerator } from '@/components/ui/qr-code'
@@ -170,6 +172,68 @@ export const IssueDocumentPage: React.FC = () => {
             </p>
             <Button onClick={() => navigate('/')}>
               Go to Home
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
+  // Check if issuer is approved
+  if (profile && 'is_approved' in profile && !profile.is_approved) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Card className="w-full max-w-md">
+          <CardContent className="p-6 text-center">
+            <Clock className="w-12 h-12 text-yellow-500 mx-auto mb-4" />
+            <h2 className="text-xl font-semibold mb-2">Approval Pending</h2>
+            <p className="text-muted-foreground mb-4">
+              Your issuer account is pending owner approval. You will be notified once approved.
+            </p>
+            <Button onClick={() => navigate('/dashboard')}>
+              Go to Dashboard
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
+  // Check if blockchain integration failed
+  if (profile && 'blockchain_registration_tx' in profile && 
+      profile.blockchain_registration_tx === 'blockchain_integration_failed') {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Card className="w-full max-w-md">
+          <CardContent className="p-6 text-center">
+            <AlertTriangle className="w-12 h-12 text-red-500 mx-auto mb-4" />
+            <h2 className="text-xl font-semibold mb-2">Blockchain Integration Failed</h2>
+            <p className="text-muted-foreground mb-4">
+              Your account is approved but blockchain integration failed. Please contact the owner to resolve this issue.
+            </p>
+            <Button onClick={() => navigate('/dashboard')}>
+              Go to Dashboard
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
+  // Check if ready for integration (legacy state)
+  if (profile && 'blockchain_registration_tx' in profile && 
+      profile.blockchain_registration_tx === 'pending_blockchain_integration') {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Card className="w-full max-w-md">
+          <CardContent className="p-6 text-center">
+            <Clock className="w-12 h-12 text-yellow-500 mx-auto mb-4" />
+            <h2 className="text-xl font-semibold mb-2">Blockchain Integration Pending</h2>
+            <p className="text-muted-foreground mb-4">
+              Your account is approved but blockchain integration is pending. Please contact the owner to complete the integration.
+            </p>
+            <Button onClick={() => navigate('/dashboard')}>
+              Go to Dashboard
             </Button>
           </CardContent>
         </Card>

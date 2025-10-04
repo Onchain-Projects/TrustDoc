@@ -49,14 +49,21 @@ export const DashboardPage = ({
   onViewDocument
 }: DashboardPageProps) => {
   const { user, profile, userType } = useAuthContext();
-  const { proofs, loading: documentsLoading, searchProofs, loadProofs } = useDocuments(profile?.issuer_id);
+  
+  // Check if this is an issuer profile
+  const isIssuer = userType === 'issuer' && profile && 'issuer_id' in profile;
+  const issuerProfile = isIssuer ? profile as any : null;
+  
+  const { proofs, loading: documentsLoading, searchProofs, loadProofs } = useDocuments(
+    issuerProfile?.issuer_id
+  );
   const [searchTerm, setSearchTerm] = useState("");
   const [activeTab, setActiveTab] = useState("all");
 
   // Debug logging
   console.log('Dashboard Debug:', {
     profile,
-    issuerId: profile?.issuer_id,
+    issuerId: issuerProfile?.issuer_id,
     proofs,
     documentsLoading
   });
@@ -96,10 +103,10 @@ export const DashboardPage = ({
 
   // Refresh documents when component mounts or issuer_id changes
   useEffect(() => {
-    if (profile?.issuer_id) {
+    if (issuerProfile?.issuer_id) {
       loadProofs();
     }
-  }, [profile?.issuer_id, loadProofs]);
+  }, [issuerProfile?.issuer_id, loadProofs]);
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -122,12 +129,58 @@ export const DashboardPage = ({
           <div>
             <h1 className="text-3xl font-bold text-foreground">Issuer Dashboard</h1>
             <p className="text-muted-foreground mt-1">
-              Issuer: <span className="font-medium">{profile?.name || issuerName}</span> • ID: <span className="font-medium">{profile?.issuer_id || issuerId}</span>
+              Issuer: <span className="font-medium">{profile?.name || issuerName}</span> • ID: <span className="font-medium">{issuerProfile?.issuer_id || issuerId}</span>
             </p>
+            {/* Approval Status */}
+            {profile && 'is_approved' in profile && (
+              <div className="mt-2 flex gap-2">
+                {profile.is_approved ? (
+                  <Badge variant="default" className="bg-green-500 hover:bg-green-600">
+                    <CheckCircle className="w-3 h-3 mr-1" />
+                    Approved Issuer
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="bg-yellow-100 text-yellow-800">
+                    <AlertTriangle className="w-3 h-3 mr-1" />
+                    Pending Approval
+                  </Badge>
+                )}
+                {/* Worker Status */}
+                {profile.is_approved && 'blockchain_registration_tx' in profile && (
+                  <>
+                    {profile.blockchain_registration_tx === 'blockchain_integration_failed' ? (
+                      <Badge variant="destructive">
+                        <AlertTriangle className="w-3 h-3 mr-1" />
+                        Blockchain Failed
+                      </Badge>
+                    ) : profile.blockchain_registration_tx === 'pending_blockchain_integration' ? (
+                      <Badge variant="outline" className="bg-yellow-100 text-yellow-800">
+                        <AlertTriangle className="w-3 h-3 mr-1" />
+                        Worker Pending
+                      </Badge>
+                    ) : profile.blockchain_registration_tx && 
+                         profile.blockchain_registration_tx !== 'pending_blockchain_integration' && 
+                         profile.blockchain_registration_tx !== 'blockchain_integration_failed' ? (
+                      <Badge variant="default" className="bg-blue-500 hover:bg-blue-600">
+                        <CheckCircle className="w-3 h-3 mr-1" />
+                        Blockchain Worker
+                      </Badge>
+                    ) : null}
+                  </>
+                )}
+              </div>
+            )}
           </div>
           <Button 
             onClick={() => onNavigate?.('issue')}
             className="mt-4 sm:mt-0"
+            disabled={
+              !profile || 
+              !('is_approved' in profile) || 
+              !profile.is_approved ||
+              (('blockchain_registration_tx' in profile) && 
+               profile.blockchain_registration_tx === 'blockchain_integration_failed')
+            }
           >
             <Plus className="w-4 h-4 mr-2" />
             Issue New Document
@@ -277,14 +330,14 @@ export const DashboardPage = ({
                 </div>
                 <div>
                   <label className="text-sm font-medium text-muted-foreground">Issuer ID</label>
-                  <p className="text-foreground font-medium font-mono">{profile?.issuer_id || issuerId || "Not available"}</p>
+                  <p className="text-foreground font-medium font-mono">{issuerProfile?.issuer_id || issuerId || "Not available"}</p>
                 </div>
               </div>
               <div className="space-y-4">
                 <div>
                   <label className="text-sm font-medium text-muted-foreground">Public Key</label>
                   <p className="text-foreground font-mono text-sm break-all bg-muted p-2 rounded">
-                    {profile?.public_key || publicKey}
+                    {issuerProfile?.public_key || publicKey}
                   </p>
                 </div>
               </div>
