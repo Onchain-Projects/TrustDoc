@@ -41,23 +41,21 @@ export class CryptographicKeyService {
 
   /**
    * Generate ECDSA key pair (recommended for blockchain compatibility)
+   * Uses ethers.Wallet.createRandom() to match TrustDoc exactly
    */
   private static generateECDSAKeyPair(keyId: string, createdAt: Date): KeyPair {
-    const { publicKey, privateKey } = crypto.generateKeyPairSync('ec', {
-      namedCurve: 'secp256k1', // Same curve as Bitcoin/Ethereum
-      publicKeyEncoding: {
-        type: 'spki',
-        format: 'pem'
-      },
-      privateKeyEncoding: {
-        type: 'pkcs8',
-        format: 'pem'
-      }
-    })
+    // Import ethers dynamically to avoid SSR issues
+    const { ethers } = require('ethers')
+    
+    // Use ethers.Wallet.createRandom() exactly like TrustDoc
+    const signingWallet = ethers.Wallet.createRandom()
+    const privateKey = signingWallet.privateKey
+    const publicKey = signingWallet.publicKey
+    const address = signingWallet.address
 
     return {
-      publicKey: publicKey.toString(),
-      privateKey: privateKey.toString(),
+      publicKey: publicKey, // Keep as hex string like TrustDoc
+      privateKey: privateKey, // Keep as hex string like TrustDoc
       keyId,
       algorithm: 'ec',
       keySize: 256,
@@ -111,13 +109,13 @@ export class CryptographicKeyService {
     const warnings: string[] = []
 
     try {
-      // Check if keys are valid PEM format
-      if (!this.isValidPEM(publicKey)) {
-        errors.push('Public key is not in valid PEM format')
+      // Check if keys are valid format
+      if (!this.isValidKeyFormat(publicKey)) {
+        errors.push('Public key is not in valid format')
       }
 
-      if (!this.isValidPEM(privateKey)) {
-        errors.push('Private key is not in valid PEM format')
+      if (!this.isValidKeyFormat(privateKey)) {
+        errors.push('Private key is not in valid format')
       }
 
       // Try to create key objects
@@ -161,9 +159,16 @@ export class CryptographicKeyService {
   }
 
   /**
-   * Check if a string is valid PEM format
+   * Check if a string is valid key format (hex for ethers, PEM for RSA)
    */
-  private static isValidPEM(key: string): boolean {
+  private static isValidKeyFormat(key: string): boolean {
+    // Check if it's a valid hex private key (ethers format)
+    const hexRegex = /^0x[a-fA-F0-9]{64}$/
+    if (hexRegex.test(key)) {
+      return true
+    }
+    
+    // Check if it's valid PEM format (for RSA keys)
     const pemRegex = /^-----BEGIN [A-Z ]+-----\n[A-Za-z0-9+/=\s]+\n-----END [A-Z ]+-----$/
     return pemRegex.test(key.trim())
   }
@@ -206,30 +211,36 @@ export class CryptographicKeyService {
   }
 
   /**
-   * Sign data with private key
+   * Sign data with private key using ethers (matches TrustDoc)
    */
   static signData(data: string, privateKey: string, algorithm: string = 'SHA256'): string {
     try {
-      const key = crypto.createPrivateKey(privateKey)
-      const sign = crypto.createSign(algorithm)
-      sign.update(data)
-      sign.end()
-      return sign.sign(key, 'hex')
+      // Import ethers dynamically
+      const { ethers } = require('ethers')
+      
+      // Create wallet from private key (hex format like TrustDoc)
+      const wallet = new ethers.Wallet(privateKey)
+      
+      // Sign the data using ethers (same as TrustDoc)
+      return wallet.signMessage(data)
     } catch (error) {
       throw new Error(`Failed to sign data: ${error}`)
     }
   }
 
   /**
-   * Verify signature with public key
+   * Verify signature with public key using ethers (matches TrustDoc)
    */
   static verifySignature(data: string, signature: string, publicKey: string, algorithm: string = 'SHA256'): boolean {
     try {
-      const key = crypto.createPublicKey(publicKey)
-      const verify = crypto.createVerify(algorithm)
-      verify.update(data)
-      verify.end()
-      return verify.verify(key, signature, 'hex')
+      // Import ethers dynamically
+      const { ethers } = require('ethers')
+      
+      // Use ethers to verify signature (same as TrustDoc)
+      const recoveredAddress = ethers.verifyMessage(data, signature)
+      const expectedAddress = ethers.computeAddress(publicKey)
+      
+      return recoveredAddress.toLowerCase() === expectedAddress.toLowerCase()
     } catch (error) {
       return false
     }

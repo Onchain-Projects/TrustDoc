@@ -2,10 +2,10 @@ import { useState } from "react";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
 import { HomePage } from "@/pages/HomePage";
-import { VerifyPage } from "@/pages/VerifyPage";
-import { RegisterPage } from "@/pages/RegisterPage";
-import { DashboardPage } from "@/pages/DashboardPage";
-import { IssueDocumentPage } from "@/pages/IssueDocumentPage";
+import { VerifyDoc } from "@/components/VerifyDoc";
+import { RegisterIssuer } from "@/components/RegisterIssuer";
+import { IssuerDashboard } from "@/components/IssuerDashboard";
+import { IssueDocument } from "@/components/IssueDocument";
 import { ProfilePage } from "@/pages/ProfilePage";
 import { OwnerDashboardPage } from "@/pages/OwnerDashboardPage";
 import { UploadModal } from "@/components/ui/upload-modal";
@@ -52,6 +52,7 @@ const Index = () => {
 
   const handleLogout = async () => {
     try {
+      // Sign out from Supabase Auth
       await signOut();
       setCurrentPage('home');
       showInfo('Logged out', 'You have been successfully logged out');
@@ -84,30 +85,37 @@ const Index = () => {
     switch (currentPage) {
       case 'verify':
         return (
-          <VerifyPage 
+          <VerifyDoc 
             onVerify={() => showInfo('Verification started', 'Processing document verification...')}
             onManualVerify={() => showInfo('Manual verification started', 'Checking signature on blockchain...')}
           />
         );
       case 'register':
-        return <RegisterPage onLogin={handleRegister} />;
+        return (
+          <RegisterIssuer 
+            onRegister={handleRegister}
+            onLogin={handleLogin}
+          />
+        );
       case 'login':
-        return <RegisterPage onLogin={handleLogin} />;
+        return (
+          <RegisterIssuer 
+            onRegister={handleRegister}
+            onLogin={handleLogin}
+            defaultTab="existing"
+          />
+        );
       case 'dashboard':
         return isLoggedIn ? (
-          <DashboardPage 
-            onNavigate={handleNavigation}
-            issuerName={profile?.name || "Demo Issuer"}
-            issuerId={profile?.issuer_id || "demo123"}
-            publicKey={profile?.public_key || "0x1234...abcd"}
-            onUpload={handleUpload}
-          />
+          <IssuerDashboard onLogout={handleLogout} onNavigate={handleNavigation} />
         ) : (
           <HomePage onNavigate={handleNavigation} />
         );
       case 'issue':
         return isLoggedIn ? (
-          <IssueDocumentPage />
+          <IssueDocument onUploadComplete={() => {
+            showSuccess('Document issued', 'Your document has been successfully issued and anchored on the blockchain');
+          }} />
         ) : (
           <HomePage onNavigate={handleNavigation} />
         );
@@ -146,9 +154,11 @@ const Index = () => {
         <Header 
           currentPage={currentPage}
           onNavigate={handleNavigation}
+          wallet={null}
           isLoggedIn={isLoggedIn}
-          userType={userType || 'issuer'}
           onLogout={handleLogout}
+          isOwner={userType === 'owner'}
+          isLoadingOwner={false}
         />
         <main className="flex-1">
           {renderCurrentPage()}

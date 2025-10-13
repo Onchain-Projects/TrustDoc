@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react'
 import { useBlockchainOperations } from '@/hooks/useBlockchain'
+import { uploadFilesAndGenerateMerkleRoot, confirmAndStoreProof } from '@/lib/upload-service'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -94,62 +95,58 @@ export const DocumentUpload: React.FC<DocumentUploadProps> = ({
     setError('')
 
     try {
-      // Step 1: Upload files and generate Merkle tree
-      const formData = new FormData()
-      files.forEach(fileObj => {
-        formData.append('files', fileObj.file)
-      })
-      formData.append('issuerId', issuerId)
-      formData.append('description', description)
-      formData.append('expiryDate', expiryDate)
-
-      setUploadProgress(25)
-
-      const uploadResponse = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData
-      })
-
-      if (!uploadResponse.ok) {
-        const errorData = await uploadResponse.json()
-        throw new Error(errorData.error || 'Upload failed')
-      }
-
-      const uploadResult = await uploadResponse.json()
-      setMerkleRoot(uploadResult.merkleRoot)
-      setUploadProgress(50)
-
-      // Step 2: Store Merkle root on blockchain
-      setUploadStage('blockchain')
-      setUploadProgress(75)
-
-      const blockchainResult = await putRoot(uploadResult.merkleRoot)
-      setTxHash(blockchainResult.txHash)
-      setUploadProgress(90)
-
-      // Step 3: Confirm and store proof
-      setUploadStage('confirming')
+      // Step 1: Upload files to Supabase and generate Merkle tree
+      // This calls Supabase DIRECTLY - no backend needed!
+      setUploadProgress(10)
+      console.log('📤 Uploading files to Supabase Storage...')
       
-      const confirmResponse = await fetch('/api/upload/confirm', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          issuerId,
-          batch: uploadResult.batch,
-          merkleRoot: uploadResult.merkleRoot,
-          filePaths: uploadResult.filePaths,
-          expiryDate,
-          description
-        })
-      })
+      const fileObjects = files.map(f => f.file)
+      const uploadResult = await uploadFilesAndGenerateMerkleRoot(
+        fileObjects,
+        issuerId,
+        description,
+        expiryDate
+      )
 
-      if (!confirmResponse.ok) {
-        const errorData = await confirmResponse.json()
-        throw new Error(errorData.error || 'Confirmation failed')
+      if (!uploadResult.success) {
+        throw new Error(uploadResult.error || 'Upload failed')
       }
 
+      console.log('✅ Files uploaded, Merkle root:', uploadResult.merkleRoot)
+      setMerkleRoot(uploadResult.merkleRoot!)
+      setUploadProgress(30)
+
+      // Step 2: Store Merkle root on blockchain via MetaMask
+      setUploadStage('blockchain')
+      setUploadProgress(50)
+      console.log('⛓️ Storing Merkle root on blockchain...')
+
+      const blockchainResult = await putRoot(uploadResult.merkleRoot!)
+      setTxHash(blockchainResult.txHash)
+      console.log('✅ Blockchain transaction complete:', blockchainResult.txHash)
+      setUploadProgress(70)
+
+      // Step 3: Sign and store proof in Supabase
+      // This also calls Supabase DIRECTLY - no backend!
+      setUploadStage('confirming')
+      setUploadProgress(85)
+      console.log('💾 Storing proof in Supabase...')
+
+      const confirmResult = await confirmAndStoreProof(
+        issuerId,
+        uploadResult.batch!,
+        uploadResult.merkleRoot!,
+        uploadResult.filePaths!,
+        fileObjects,
+        expiryDate,
+        description
+      )
+
+      if (!confirmResult.success) {
+        throw new Error(confirmResult.error || 'Confirmation failed')
+      }
+
+      console.log('✅ Proof stored successfully!')
       setUploadProgress(100)
       setUploadStage('complete')
 
@@ -160,7 +157,8 @@ export const DocumentUpload: React.FC<DocumentUploadProps> = ({
         fileCount: files.length
       })
 
-    } catch (error) {
+    } catch (error: any) {
+      console.error('❌ Upload error:', error)
       setError(error.message)
       setUploadStage('idle')
       setUploadProgress(0)

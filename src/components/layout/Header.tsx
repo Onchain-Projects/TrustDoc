@@ -4,18 +4,23 @@ import { Button } from "@/components/ui/button";
 interface HeaderProps {
   currentPage: string;
   onNavigate: (page: string) => void;
+  wallet?: string | null;
   isLoggedIn: boolean;
-  userType?: 'issuer' | 'owner';
   onLogout?: () => void;
+  isOwner?: boolean;
+  isLoadingOwner?: boolean;
 }
 
-export const Header = ({ currentPage, onNavigate, isLoggedIn, userType, onLogout }: HeaderProps) => {
+export const Header = ({ currentPage, onNavigate, wallet, isLoggedIn, onLogout, isOwner, isLoadingOwner }: HeaderProps) => {
   return (
     <header className="bg-card border-b border-border shadow-sm">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           {/* Logo and Brand */}
-          <div className="flex items-center space-x-3">
+          <div 
+            className="flex items-center space-x-3 cursor-pointer hover:opacity-80 transition-opacity"
+            onClick={() => onNavigate('home')}
+          >
             <div className="flex items-center justify-center w-8 h-8 bg-primary rounded-lg">
               <Shield className="w-5 h-5 text-primary-foreground" />
             </div>
@@ -27,40 +32,52 @@ export const Header = ({ currentPage, onNavigate, isLoggedIn, userType, onLogout
 
           {/* Navigation */}
           <nav className="hidden md:flex items-center space-x-1">
-            <Button
-              variant={currentPage === 'home' ? 'default' : 'ghost'}
-              size="sm"
+            <a
+              className={`px-3 py-2 rounded-md text-sm font-medium transition-colors duration-200 ${
+                currentPage === 'home' 
+                  ? 'text-blue-700 bg-blue-50' 
+                  : 'text-gray-600 hover:text-blue-700 hover:bg-blue-50'
+              }`}
               onClick={() => onNavigate('home')}
-              className="font-medium"
+              style={{ cursor: 'pointer' }}
             >
               Home
-            </Button>
-            <Button
-              variant={currentPage === 'verify' ? 'default' : 'ghost'}
-              size="sm"
+            </a>
+            <a
+              className={`px-3 py-2 rounded-md text-sm font-medium transition-colors duration-200 ${
+                currentPage === 'verify' 
+                  ? 'text-blue-700 bg-blue-50' 
+                  : 'text-gray-600 hover:text-blue-700 hover:bg-blue-50'
+              }`}
               onClick={() => onNavigate('verify')}
-              className="font-medium"
+              style={{ cursor: 'pointer' }}
             >
               Verify Document
-            </Button>
+            </a>
             {isLoggedIn && (
               <>
-                <Button
-                  variant={currentPage === 'dashboard' ? 'default' : 'ghost'}
-                  size="sm"
+                <a
+                  className={`px-3 py-2 rounded-md text-sm font-medium transition-colors duration-200 ${
+                    currentPage === 'dashboard' 
+                      ? 'text-blue-700 bg-blue-50' 
+                      : 'text-gray-600 hover:text-blue-700 hover:bg-blue-50'
+                  }`}
                   onClick={() => onNavigate('dashboard')}
-                  className="font-medium"
+                  style={{ cursor: 'pointer' }}
                 >
                   Dashboard
-                </Button>
-                <Button
-                  variant={currentPage === 'issue' ? 'default' : 'ghost'}
-                  size="sm"
+                </a>
+                <a
+                  className={`px-3 py-2 rounded-md text-sm font-medium transition-colors duration-200 ${
+                    currentPage === 'issue' 
+                      ? 'text-blue-700 bg-blue-50' 
+                      : 'text-gray-600 hover:text-blue-700 hover:bg-blue-50'
+                  }`}
                   onClick={() => onNavigate('issue')}
-                  className="font-medium"
+                  style={{ cursor: 'pointer' }}
                 >
                   Issue Document
-                </Button>
+                </a>
               </>
             )}
           </nav>
@@ -78,7 +95,7 @@ export const Header = ({ currentPage, onNavigate, isLoggedIn, userType, onLogout
                   <User className="w-4 h-4" />
                   <span className="hidden md:inline">Profile</span>
                 </Button>
-                {userType === 'owner' && (
+                {isOwner && (
                   <span className="px-2 py-1 text-xs font-medium bg-warning text-warning-foreground rounded">
                     OWNER
                   </span>

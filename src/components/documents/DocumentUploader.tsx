@@ -1,6 +1,8 @@
 import React, { useState, useRef, useCallback } from 'react'
 import { useBlockchainOperations } from '@/hooks/useBlockchain'
-import { handleFileUpload } from '@/api/upload'
+import { hashFileWithKeccak256 } from '@/lib/verification'
+import { ethers } from 'ethers'
+import { MerkleTree } from 'merkletreejs'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -56,7 +58,7 @@ const ACCEPTED_FILE_TYPES = {
 }
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
-const MAX_FILES = 20
+const MAX_FILES = 1000
 
 export const DocumentUploader: React.FC<DocumentUploaderProps> = ({
   issuerId,
@@ -83,13 +85,10 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({
     })
   }
 
-  // Helper function to generate file hash
+  // Helper function to generate file hash using keccak256 (matches Real TrustDoc)
   const generateFileHash = async (file: File): Promise<string> => {
     const arrayBuffer = await file.arrayBuffer()
-    const hashBuffer = await crypto.subtle.digest('SHA-256', arrayBuffer)
-    const hashArray = Array.from(new Uint8Array(hashBuffer))
-    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
-    return `0x${hashHex}`
+    return hashFileWithKeccak256(arrayBuffer)
   }
   
   const [files, setFiles] = useState<UploadedFile[]>([])
@@ -227,7 +226,7 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
   }
 
-  // Handle upload
+  // Handle upload (matches Real TrustDoc structure)
   const handleUpload = async () => {
     if (files.length === 0) {
       setError('Please select at least one file')
@@ -254,100 +253,147 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({
     setError('')
 
     try {
-      // Step 1: Process files locally
-      setUploadProgress(25)
+      // Step 1: Generate file hashes using keccak256
+      setUploadProgress(10)
       
-      // Convert files to base64 and generate hashes
       const fileData = await Promise.all(
         files.map(async (fileObj) => {
-          const content = await fileToBase64(fileObj.file)
           const hash = await generateFileHash(fileObj.file)
           return {
             name: fileObj.file.name,
             size: fileObj.file.size,
             type: fileObj.file.type,
-            content,
             hash
           }
         })
       )
 
-      const uploadResult = await handleFileUpload(fileData, issuerId, mode === 'batch' ? batchName : undefined)
+      console.log('📄 File hashes generated (keccak256):', fileData.map(f => f.hash))
+      setUploadProgress(25)
+
+      // Step 2: Build Merkle tree from hashes
+      const leaves = fileData.map(f => f.hash)
+      const leavesBuf = leaves.map(x => Buffer.from(x.replace(/^0x/, ''), 'hex'))
       
-      if (!uploadResult.success) {
-        throw new Error(uploadResult.error || 'File processing failed')
-      }
+      const tree = new MerkleTree(
+        leavesBuf,
+        (data) => {
+          const hash = ethers.keccak256(data)
+          return Buffer.from(hash.slice(2), 'hex')
+        },
+        { sortPairs: true }
+      )
+      
+      const merkleRoot = '0x' + tree.getRoot().toString('hex')
+      console.log('🌳 Merkle root generated:', merkleRoot)
+      
+      // Generate Merkle proofs for each document
+      const merkleProofs = leaves.map((_, index) => {
+        const proof = tree.getHexProof(leavesBuf[index])
+        return proof
+      })
+      
+      setMerkleRoot(merkleRoot)
+      setUploadProgress(40)
 
-      setMerkleRoot(uploadResult.merkleRoot)
-      setUploadProgress(50)
-
-      // Step 2: Store Merkle root on blockchain
+      // Step 3: Store Merkle root on blockchain
       setUploadStage('blockchain')
-      setUploadProgress(75)
-
-      // Use real blockchain operations instead of mock
-      const blockchainResult = await putRoot(uploadResult.merkleRoot!)
+      console.log('⛓️ Storing Merkle root on blockchain...')
+      
+      const blockchainResult = await putRoot(merkleRoot)
       
       if (!blockchainResult.success) {
         throw new Error(blockchainResult.error || 'Blockchain interaction failed')
       }
       
       setTxHash(blockchainResult.txHash)
-      setUploadProgress(90)
+      console.log('✅ Blockchain transaction:', blockchainResult.txHash)
+      setUploadProgress(70)
 
-      // Step 3: Store proof in Supabase
+      // Step 4: Sign Merkle root with issuer's private key
       setUploadStage('confirming')
+      console.log('🔐 Signing Merkle root...')
+      
+      // Get issuer's private key
+      const { supabase } = await import('@/lib/supabase')
+      const { data: issuerData } = await supabase
+        .from('issuers')
+        .select('private_key, public_key')
+        .eq('issuer_id', issuerId)
+        .single()
+      
+      if (!issuerData) {
+        throw new Error('Issuer not found')
+      }
 
-      // Store the proof data in Supabase
-      const { documentService } = await import('@/lib/documents')
+      // Sign Merkle root
+      const wallet = new ethers.Wallet(issuerData.private_key)
+      const merkleRootBytes = ethers.getBytes(merkleRoot)
+      const signature = await wallet.signMessage(merkleRootBytes)
+      console.log('✅ Signature generated:', signature)
+      
+      setUploadProgress(85)
+
+      // Step 5: Store proof in Supabase (matches Real TrustDoc MongoDB structure)
+      const batchId = mode === 'batch' && batchName ? 
+        `batch_${batchName.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}` : 
+        `single_${Date.now()}`
+      
+      const explorerUrl = `https://amoy.polygonscan.com/tx/${blockchainResult.txHash}`
+      
+      // Create proof_json structure matching MongoDB format
+      const proofJson = {
+        proofs: [{
+          merkleRoot: merkleRoot,
+          leaves: leaves,
+          files: fileData.map(f => f.name),
+          proofs: merkleProofs,
+          signature: signature,
+          timestamp: new Date().toISOString()
+        }],
+        network: 'Polygon Amoy',
+        explorerUrl: explorerUrl,
+        issuerPublicKey: issuerData.public_key
+      }
       
       const proofData = {
         issuer_id: issuerId,
-        batch: uploadResult.batch!,
-        merkle_root: uploadResult.merkleRoot!,
-        proof_json: {
-          documentName,
-          batchName: mode === 'batch' ? batchName : null,
-          description,
-          txHash: blockchainResult.txHash,
-          fileHashes: fileData.map(f => f.hash),
-          issuedAt: new Date().toISOString(),
-          mode,
-          isNewBatch: uploadResult.isNewBatch,
-          existingBatchId: uploadResult.existingBatchId,
-          totalDocuments: uploadResult.totalDocuments
-        },
-        file_paths: uploadResult.filePaths!,
+        batch: batchId,
+        merkle_root: merkleRoot,
+        proof_json: proofJson,
+        signature: signature,
+        file_paths: fileData.map((f, i) => `uploads/${batchId}/${i}_${f.name}`),
         expiry_date: expiryDate || null,
         description: description || null
       }
 
-      console.log('Storing proof data:', proofData)
+      console.log('💾 Storing proof in database:', proofData)
       
+      const { documentService } = await import('@/lib/documents')
       const proof = await documentService.createProof(proofData)
-      console.log('Proof stored successfully:', proof)
+      console.log('✅ Proof stored successfully')
 
       setUploadProgress(100)
       setUploadStage('complete')
 
       onUploadComplete?.({
-        merkleRoot: uploadResult.merkleRoot,
-        batch: uploadResult.batch,
+        merkleRoot: merkleRoot,
+        batch: batchId,
         txHash: blockchainResult.txHash,
         fileCount: files.length,
         documentName,
         mode,
         proof,
-        isNewBatch: uploadResult.isNewBatch,
-        existingBatchId: uploadResult.existingBatchId,
-        totalDocuments: uploadResult.totalDocuments
+        isNewBatch: true,
+        totalDocuments: files.length
       })
 
-    } catch (error) {
-      setError(error.message)
+    } catch (error: any) {
+      console.error('❌ Upload error:', error)
+      setError(error.message || 'Upload failed')
       setUploadStage('idle')
       setUploadProgress(0)
-      onError?.(error.message)
+      onError?.(error.message || 'Upload failed')
     }
   }
 
@@ -372,8 +418,21 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({
       <div className="flex space-x-2">
         <Button
           variant={mode === 'single' ? 'default' : 'outline'}
-          onClick={() => onModeChange?.('single')}
-          disabled={disabled || files.length > 0}
+          onClick={() => {
+            onModeChange?.('single')
+            // Clean up file previews to prevent memory leaks
+            files.forEach(f => {
+              if (f.preview) URL.revokeObjectURL(f.preview)
+            })
+            // Clear all state when switching to single mode
+            setFiles([])
+            setDocumentName('')
+            setBatchName('')
+            setDescription('')
+            setExpiryDate('')
+            setError('')
+          }}
+          disabled={disabled}
           className="flex items-center space-x-2"
         >
           <FileText className="w-4 h-4" />
@@ -381,8 +440,21 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({
         </Button>
         <Button
           variant={mode === 'batch' ? 'default' : 'outline'}
-          onClick={() => onModeChange?.('batch')}
-          disabled={disabled || files.length > 0}
+          onClick={() => {
+            onModeChange?.('batch')
+            // Clean up file previews to prevent memory leaks
+            files.forEach(f => {
+              if (f.preview) URL.revokeObjectURL(f.preview)
+            })
+            // Clear all state when switching to batch mode
+            setFiles([])
+            setDocumentName('')
+            setBatchName('')
+            setDescription('')
+            setExpiryDate('')
+            setError('')
+          }}
+          disabled={disabled}
           className="flex items-center space-x-2"
         >
           <Layers className="w-4 h-4" />
@@ -440,7 +512,7 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({
             {dragActive ? 'Drop files here' : 'Click to upload or drag and drop'}
           </p>
           <p className="text-xs text-muted-foreground">
-            {mode === 'single' ? 'Single file' : `Up to ${MAX_FILES} files`}, max 10MB each
+            {mode === 'single' ? 'Single file' : 'Multiple files'}, max 10MB each
           </p>
           <p className="text-xs text-muted-foreground mt-1">
             PDF, DOC, DOCX, TXT, JPG, PNG, XLS, XLSX
@@ -461,47 +533,131 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({
       {/* Selected Files */}
       {files.length > 0 && (
         <div className="space-y-2">
-          <Label>Selected Files ({files.length})</Label>
-          <div className="max-h-60 overflow-y-auto space-y-2">
-            {files.map(fileObj => (
-              <div
-                key={fileObj.id}
-                className="flex items-center justify-between p-3 bg-muted rounded-lg"
+          <div className="flex items-center justify-between">
+            <Label>Selected Files ({files.length})</Label>
+            {files.length > 5 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  // Clean up file previews
+                  files.forEach(f => {
+                    if (f.preview) URL.revokeObjectURL(f.preview)
+                  })
+                  setFiles([])
+                }}
+                className="text-red-600 hover:text-red-700 text-xs"
               >
-                <div className="flex items-center space-x-3">
-                  {fileObj.preview ? (
-                    <img
-                      src={fileObj.preview}
-                      alt={fileObj.file.name}
-                      className="w-10 h-10 object-cover rounded"
-                    />
-                  ) : (
-                    <div className="w-10 h-10 bg-muted-foreground/10 rounded flex items-center justify-center">
-                      {getFileIcon(fileObj.type)}
+                Clear All
+              </Button>
+            )}
+          </div>
+          <div className="max-h-40 overflow-y-auto space-y-2">
+            {files.length <= 10 ? (
+              // Show all files if 10 or fewer
+              files.map(fileObj => (
+                <div
+                  key={fileObj.id}
+                  className="flex items-center justify-between p-2 bg-muted rounded-lg"
+                >
+                  <div className="flex items-center space-x-3">
+                    {fileObj.preview ? (
+                      <img
+                        src={fileObj.preview}
+                        alt={fileObj.file.name}
+                        className="w-8 h-8 object-cover rounded"
+                      />
+                    ) : (
+                      <div className="w-8 h-8 bg-muted-foreground/10 rounded flex items-center justify-center">
+                        {getFileIcon(fileObj.type)}
+                      </div>
+                    )}
+                    <div>
+                      <p className="text-sm font-medium truncate max-w-48">{fileObj.file.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {formatFileSize(fileObj.size)} • {ACCEPTED_FILE_TYPES[fileObj.type as keyof typeof ACCEPTED_FILE_TYPES]?.label || 'Unknown'}
+                      </p>
                     </div>
-                  )}
-                  <div>
-                    <p className="text-sm font-medium">{fileObj.file.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {formatFileSize(fileObj.size)} • {ACCEPTED_FILE_TYPES[fileObj.type as keyof typeof ACCEPTED_FILE_TYPES]?.label || 'Unknown'}
-                    </p>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Badge variant="outline" className="text-xs">
+                      {fileObj.hash.slice(0, 6)}...
+                    </Badge>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => removeFile(fileObj.id)}
+                      disabled={disabled}
+                      className="h-6 w-6 p-0"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </Button>
                   </div>
                 </div>
-                <div className="flex items-center space-x-2">
-                  <Badge variant="outline" className="text-xs">
-                    {fileObj.hash.slice(0, 8)}...
-                  </Badge>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => removeFile(fileObj.id)}
-                    disabled={disabled}
+              ))
+            ) : (
+              // Show first 5 files + summary for many files
+              <>
+                {files.slice(0, 5).map(fileObj => (
+                  <div
+                    key={fileObj.id}
+                    className="flex items-center justify-between p-2 bg-muted rounded-lg"
                   >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
+                    <div className="flex items-center space-x-3">
+                      {fileObj.preview ? (
+                        <img
+                          src={fileObj.preview}
+                          alt={fileObj.file.name}
+                          className="w-8 h-8 object-cover rounded"
+                        />
+                      ) : (
+                        <div className="w-8 h-8 bg-muted-foreground/10 rounded flex items-center justify-center">
+                          {getFileIcon(fileObj.type)}
+                        </div>
+                      )}
+                      <div>
+                        <p className="text-sm font-medium truncate max-w-48">{fileObj.file.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {formatFileSize(fileObj.size)} • {ACCEPTED_FILE_TYPES[fileObj.type as keyof typeof ACCEPTED_FILE_TYPES]?.label || 'Unknown'}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <Badge variant="outline" className="text-xs">
+                        {fileObj.hash.slice(0, 6)}...
+                      </Badge>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => removeFile(fileObj.id)}
+                        disabled={disabled}
+                        className="h-6 w-6 p-0"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+                <div className="p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-800">
+                  <div className="flex items-center justify-between">
+                    <span>
+                      <strong>+{files.length - 5} more files</strong>
+                      <br />
+                      <span className="text-xs">
+                        Total size: {formatFileSize(files.reduce((sum, file) => sum + file.size, 0))}
+                      </span>
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-xs"
+                    >
+                      Show All
+                    </Button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              </>
+            )}
           </div>
         </div>
       )}

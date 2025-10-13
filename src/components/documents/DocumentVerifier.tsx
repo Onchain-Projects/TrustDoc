@@ -1,4 +1,5 @@
 import React, { useState, useRef } from 'react'
+import { verifyDocument } from '@/lib/verification'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Progress } from '@/components/ui/progress'
@@ -88,37 +89,27 @@ export const DocumentVerifier: React.FC<DocumentVerifierProps> = ({
       return
     }
 
-    setVerificationStage('uploading')
+    setVerificationStage('verifying')
     setVerificationProgress(0)
     setError('')
     onVerificationStart?.()
 
     try {
-      // Step 1: Upload file for verification
-      const formData = new FormData()
-      formData.append('file', file)
+      // Verify document directly using Supabase - no backend API needed!
+      console.log('🔍 Starting document verification...')
+      setVerificationProgress(20)
 
-      setVerificationProgress(25)
-
-      const response = await fetch('/api/verify', {
-        method: 'POST',
-        body: formData
-      })
-
-      setVerificationProgress(75)
-
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || 'Verification failed')
-      }
-
-      const result = await response.json()
+      // Call the verification service directly
+      const result = await verifyDocument(file)
+      
+      console.log('✅ Verification complete:', result)
       setVerificationProgress(100)
       setVerificationStage('complete')
 
       onVerificationComplete?.(result)
 
-    } catch (error) {
+    } catch (error: any) {
+      console.error('❌ Verification error:', error)
       setError(error.message)
       setVerificationStage('idle')
       setVerificationProgress(0)
