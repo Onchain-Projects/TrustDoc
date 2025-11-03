@@ -17,10 +17,11 @@ export default defineConfig(({ mode }) => ({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      buffer: 'buffer',
     },
   },
   optimizeDeps: {
-    include: ["clsx", "tailwind-merge", "ethers"],
+    include: ["clsx", "tailwind-merge", "ethers", "buffer"],
     force: true,
   },
   define: {

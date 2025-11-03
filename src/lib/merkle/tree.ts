@@ -1,10 +1,16 @@
 import { ethers } from 'ethers'
 import { MerkleTree } from 'merkletreejs'
+import crypto from 'crypto'
 
 // Merkle Tree Configuration
 export const MERKLE_CONFIG = {
-  hashFunction: 'keccak256',
+  hashFunction: 'sha256',  // Changed to SHA-256 to match Original TrustDoc
   sortPairs: true
+}
+
+// SHA-256 hash function for Merkle tree (matches Original TrustDoc)
+function sha256Hash(data: any): Buffer {
+  return crypto.createHash('sha256').update(data).digest()
 }
 
 // Document hash interface
@@ -33,7 +39,7 @@ export class MerkleTreeUtils {
   constructor(hashes: string[], fileNames: string[]) {
     this.leaves = hashes
     this.files = fileNames
-    this.tree = new MerkleTree(hashes, ethers.keccak256, { sortPairs: MERKLE_CONFIG.sortPairs })
+    this.tree = new MerkleTree(hashes, sha256Hash, { sortPairs: MERKLE_CONFIG.sortPairs })
   }
 
   // Get Merkle root
@@ -113,7 +119,7 @@ export const documentUtils = {
 export const proofUtils = {
   // Verify a Merkle proof
   verifyMerkleProof(proof: MerkleProof, leaf: string, root: string): boolean {
-    const tree = new MerkleTree([leaf], ethers.keccak256, { sortPairs: MERKLE_CONFIG.sortPairs })
+    const tree = new MerkleTree([leaf], sha256Hash, { sortPairs: MERKLE_CONFIG.sortPairs })
     return tree.verify(proof.proofs, leaf, root)
   },
 

@@ -139,7 +139,8 @@ export const DocumentUpload: React.FC<DocumentUploadProps> = ({
         uploadResult.filePaths!,
         fileObjects,
         expiryDate,
-        description
+        description,
+        blockchainResult.txHash || txHash // Use blockchainResult.txHash directly, fallback to state
       )
 
       if (!confirmResult.success) {

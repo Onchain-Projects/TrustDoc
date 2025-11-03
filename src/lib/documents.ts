@@ -51,29 +51,21 @@ export const documentService = {
   },
 
   // Create new proof record
+  // Schema matches MongoDB structure:
+  // { id, issuer_id, batch, merkle_root, proof_json, signature, created_at, expiry_date, description, file_paths }
   async createProof(proofData: CreateProofData) {
     console.log('documentService: Creating proof with data:', proofData)
     
-    // Map our expected schema to the current database schema
+    // Direct mapping to database schema - file_paths is now a column, not in proof_json
     const dbRecord = {
-      // Current database columns
-      proof_json: {
-        issuer_id: proofData.issuer_id,
-        batch: proofData.batch,
-        merkle_root: proofData.merkle_root,
-        file_paths: proofData.file_paths,
-        description: proofData.description,
-        expiry_date: proofData.expiry_date,
-        ...proofData.proof_json // Include any additional proof data
-      },
-      signature: proofData.merkle_root, // Use merkle_root as signature for now
-      expiry_date: proofData.expiry_date,
-      // Add the new columns if they exist
       issuer_id: proofData.issuer_id,
       batch: proofData.batch,
       merkle_root: proofData.merkle_root,
-      file_paths: proofData.file_paths,
-      description: proofData.description
+      proof_json: proofData.proof_json, // Contains only: proofs[], network, explorerUrl, issuerPublicKey
+      signature: proofData.signature || null,
+      file_paths: proofData.file_paths || null, // Now stored as array column
+      expiry_date: proofData.expiry_date || null,
+      description: proofData.description || null
     }
     
     console.log('documentService: Mapped database record:', dbRecord)

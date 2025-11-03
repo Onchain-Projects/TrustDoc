@@ -135,17 +135,18 @@ export const RegisterIssuer = ({ onRegister, onLogin, defaultTab = "new" }: Regi
       await tx.wait();
 
       // Create issuer in Supabase database
+      // NOTE: Column names are camelCase (issuerId, privateKey, publicKey, metaMaskAddress) not snake_case
       const { error: issuerError } = await supabase
         .from('issuers')
         .insert({
           email: email.trim(),
           password: password, // In production, this should be hashed
           address: address, // Store the new signing address
-          issuer_id: issuerId,
+          issuerId: issuerId,  // Use camelCase column name
           name: name.trim(),
-          public_key: publicKey,
-          private_key: privateKey,
-          meta_mask_address: userAddress // Store the user's MetaMask address
+          publicKey: publicKey,  // Use camelCase column name - REAL cryptographic key
+          privateKey: privateKey,  // Use camelCase column name - REAL cryptographic key
+          metaMaskAddress: userAddress // Use camelCase column name - Store the user's MetaMask address
         });
 
       if (issuerError) {

@@ -9,6 +9,8 @@ import { useAuthContext } from "@/contexts/AuthContext";
 import { supabase, supabaseAdmin } from "@/lib/supabase";
 import { getContractInstance } from "@/lib/blockchain/contract";
 import { ethers } from "ethers";
+import { MerkleTree } from "merkletreejs";
+import { sha256 } from "js-sha256";
 
 interface IssueDocumentProps {
   onUploadComplete?: () => void;
@@ -19,7 +21,7 @@ export const IssueDocument = ({ onUploadComplete }: IssueDocumentProps) => {
   const { user, profile, userType } = useAuthContext();
   
   // Get issuerId from Supabase Auth profile
-  const issuerId = profile?.issuer_id || null;
+  const issuerId = profile?.issuerId || null;
   const isLoggedIn = !!(user && profile && issuerId);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [batch, setBatch] = useState("");
@@ -164,65 +166,22 @@ export const IssueDocument = ({ onUploadComplete }: IssueDocumentProps) => {
 
       // Create Merkle root using EXACT method from real working TrustDoc
       // Real working TrustDoc uses merkletreejs + sha256 + sortPairs: true
-      // Browser-compatible implementation
+      // Always use a Merkle tree, even for single-document batches
       
-      let merkleRoot;
-      if (fileHashes.length === 1) {
-        // For single file, use the file hash directly (like real working TrustDoc)
-        merkleRoot = fileHashes[0];
-      } else {
-        // For multiple files, implement the EXACT same algorithm as real working TrustDoc
-        // but using browser-compatible APIs
-        
-        // 1. Sort the hashes (like real working TrustDoc with sortPairs: true)
-        const sortedHashes = [...fileHashes].sort();
-        
-        // 2. Convert hex hashes to Uint8Array (browser-compatible Buffer)
-        const leafBuffers = sortedHashes.map(hash => {
-          const hex = hash.slice(2); // Remove 0x prefix
-          return new Uint8Array(hex.match(/.{1,2}/g)!.map(byte => parseInt(byte, 16)));
-        });
-        
-        // 3. Create Merkle tree using js-sha256 library (browser-compatible)
-        // This implements the exact same algorithm as merkletreejs with sortPairs: true
-        
-        // Import js-sha256 library
-        const sha256 = (await import('js-sha256')).sha256;
-        
-        // Browser-compatible SHA-256 function
-        const sha256Hash = (data: Uint8Array): Uint8Array => {
-          const hash = sha256(data);
-          return new Uint8Array(hash.match(/.{1,2}/g)!.map(byte => parseInt(byte, 16)));
-        };
-        
-        const createMerkleRoot = (leaves: Uint8Array[]): string => {
-          if (leaves.length === 1) {
-            return '0x' + Array.from(leaves[0]).map(b => b.toString(16).padStart(2, '0')).join('');
-          }
-          
-          // Pair up leaves and hash each pair
-          const pairs: Uint8Array[] = [];
-          for (let i = 0; i < leaves.length; i += 2) {
-            if (i + 1 < leaves.length) {
-              // Hash the pair
-              const combined = new Uint8Array(leaves[i].length + leaves[i + 1].length);
-              combined.set(leaves[i], 0);
-              combined.set(leaves[i + 1], leaves[i].length);
-              const hash = sha256Hash(combined);
-              pairs.push(hash);
-            } else {
-              // Odd leaf, hash with itself
-              const hash = sha256Hash(leaves[i]);
-              pairs.push(hash);
-            }
-          }
-          
-          // Recursively create root
-          return createMerkleRoot(pairs);
-        };
-        
-        merkleRoot = createMerkleRoot(leafBuffers);
-      }
+      // Convert hex hashes to Buffer for MerkleTree (with polyfill)
+      const leafBuffers = fileHashes.map(hash => {
+        return Buffer.from(hash.slice(2), 'hex');
+      });
+      
+      // Create Merkle tree using merkletreejs + sha256 + sortPairs: true
+      const sha256Hash = (data: Buffer | string): Buffer => {
+        const dataBuffer = typeof data === 'string' ? Buffer.from(data.slice(2), 'hex') : data;
+        const hashHex = sha256(dataBuffer);
+        return Buffer.from(hashHex, 'hex');
+      };
+      
+      const tree = new MerkleTree(leafBuffers, sha256Hash, { sortPairs: true });
+      const merkleRoot = '0x' + tree.getRoot().toString('hex');
       
       console.log('🔍 Merkle root generated:', merkleRoot);
 
@@ -271,21 +230,46 @@ export const IssueDocument = ({ onUploadComplete }: IssueDocumentProps) => {
         const newSigner = await newProvider.getSigner();
         const newContract = new ethers.Contract(contractAddress, ABI.abi, newSigner);
         
-        // 3. Check if Merkle root already exists on-chain (like working TrustDoc)
-        setUploadStatus("Checking if document already exists...");
-        console.log('🔍 About to check Merkle root existence:', merkleRoot);
-        try {
-          exists = await newContract.getRootTimestamp(merkleRoot);
-          console.log('🔍 Merkle root exists check result:', exists);
-          console.log('🔍 Exists toString:', exists.toString());
-          console.log('🔍 Is zero?', exists.toString() === '0');
-        } catch (checkErr) {
-          console.error('🔍 Error checking Merkle root:', checkErr);
-          throw new Error('Error checking Merkle root on-chain: ' + (checkErr?.message || checkErr));
+      // 3. Check if Merkle root already exists on-chain (like working TrustDoc)
+      setUploadStatus("Checking if document already exists...");
+      console.log('🔍 About to check Merkle root existence:', merkleRoot);
+      try {
+        exists = await newContract.getRootTimestamp(merkleRoot);
+        console.log('🔍 Merkle root exists check result:', exists);
+        console.log('🔍 Exists toString:', exists.toString());
+        console.log('🔍 Is zero?', exists.toString() === '0');
+      } catch (checkErr) {
+        console.error('🔍 Error checking Merkle root:', checkErr);
+        throw new Error('Error checking Merkle root on-chain: ' + (checkErr?.message || checkErr));
+      }
+
+      // Preflight: ensure signer is authorized worker on this contract
+      try {
+        const currentAddr = await newSigner.getAddress();
+        const isWorker = await newContract.isWorker(currentAddr);
+        if (!isWorker) {
+          throw new Error('Wallet permission error: Your wallet is not authorized (not a worker) on this contract.');
         }
-        
-        // Update contract reference for later use
-        contract = newContract;
+      } catch (authErr) {
+        console.error('🔍 Authorization check failed:', authErr);
+        throw authErr;
+      }
+
+      // Preflight: static call to catch reverts before sending tx
+      try {
+        if (newContract.putRoot && newContract.putRoot.staticCall) {
+          await newContract.putRoot.staticCall(merkleRoot);
+        } else {
+          // Fallback to gas estimation as preflight
+          await newContract.putRoot.estimateGas(merkleRoot);
+        }
+      } catch (staticErr) {
+        console.error('🔍 Preflight revert detected:', staticErr);
+        throw new Error('Transaction would revert: ' + (staticErr?.shortMessage || staticErr?.message || staticErr));
+      }
+
+      // Update contract reference for later use
+      contract = newContract;
       } else {
         // 3. Check if Merkle root already exists on-chain (like working TrustDoc)
         setUploadStatus("Checking if document already exists...");
@@ -298,6 +282,31 @@ export const IssueDocument = ({ onUploadComplete }: IssueDocumentProps) => {
         } catch (checkErr) {
           console.error('🔍 Error checking Merkle root:', checkErr);
           throw new Error('Error checking Merkle root on-chain: ' + (checkErr?.message || checkErr));
+        }
+
+        // Preflight: ensure signer is authorized worker on this contract
+        try {
+          const currentAddr = await signer.getAddress();
+          const isWorker = await contract.isWorker(currentAddr);
+          if (!isWorker) {
+            throw new Error('Wallet permission error: Your wallet is not authorized (not a worker) on this contract.');
+          }
+        } catch (authErr) {
+          console.error('🔍 Authorization check failed:', authErr);
+          throw authErr;
+        }
+
+        // Preflight: static call to catch reverts before sending tx
+        try {
+          if (contract.putRoot && contract.putRoot.staticCall) {
+            await contract.putRoot.staticCall(merkleRoot);
+          } else {
+            // Fallback to gas estimation as preflight
+            await contract.putRoot.estimateGas(merkleRoot);
+          }
+        } catch (staticErr) {
+          console.error('🔍 Preflight revert detected:', staticErr);
+          throw new Error('Transaction would revert: ' + (staticErr?.shortMessage || staticErr?.message || staticErr));
         }
       }
       
@@ -354,76 +363,85 @@ export const IssueDocument = ({ onUploadComplete }: IssueDocumentProps) => {
         throw new Error('Transaction failed: Please try again. If the problem persists, check your MetaMask connection and wallet balance.');
       }
 
-      // 5. Notify backend to sign and store proof (simulate working TrustDoc's backend confirmation)
-      // In working TrustDoc, this calls http://localhost:4000/upload/confirmRootOnChain
-      // We simulate this by directly storing in Supabase
-      const confirmData = {
-        issuerId: issuerId, // This is the issuerId value
-        batch: batchName,
-        merkleRoot,
-        files: selectedFiles.map(f => f.name),
-        description: descriptionEl?.value?.trim() || null,
-        expiryDate: expiryDateEl?.value || null,
-        network,
-        explorerUrl: `https://amoy.polygonscan.com/tx/${tx.hash}`
-      };
+      // 5. Sign and store proof (MATCHING WORKING BACKEND LOGIC)
+      // This matches backend/routes/uploadDocs.js lines 144-243
+      setUploadStatus("Generating signature and proofs...");
       
-      // Simulate backend confirmation (no error in our case since we handle it directly)
-      console.log('Backend confirmation data:', confirmData);
+      // Fetch issuer's private key from Supabase
+      const { data: issuerDoc, error: issuerError } = await supabase
+        .from('issuers')
+        .select('privateKey, publicKey, name')
+        .eq('issuerId', issuerId)
+        .single();
 
-      // 6. Upload files to Supabase Storage (using service role key to bypass RLS)
-      setUploadStatus("Storing files...");
-      
-      // Use service role key for storage uploads (bypasses RLS)
-      if (!supabaseAdmin) {
-        throw new Error('Service role key not configured for file uploads');
+      if (issuerError || !issuerDoc || !issuerDoc.privateKey) {
+        throw new Error(`Issuer or private key not found: ${issuerError?.message || 'Unknown error'}`);
       }
-      
-      const uploadedFiles = [];
-      for (let i = 0; i < selectedFiles.length; i++) {
-        const file = selectedFiles[i];
-        const fileName = `${issuerId}/${batchName}/${file.name}`;
-        
-        // Use service role key to bypass RLS
-        const { data, error } = await supabaseAdmin.storage
-          .from('documents')
-          .upload(fileName, file);
 
-        if (error) {
-          throw new Error(`Failed to upload ${file.name}: ${error.message}`);
+      // Validate private key format
+      if (!issuerDoc.privateKey.startsWith('0x') || issuerDoc.privateKey.length < 64) {
+        throw new Error('Invalid private key format. Please generate a proper cryptographic key pair.');
+      }
+
+      // Sign Merkle root (MATCHING WORKING BACKEND: ethers.getBytes then signMessage)
+      let signature: string;
+      try {
+        const wallet = new ethers.Wallet(issuerDoc.privateKey);
+        let merkleRootBytes: Uint8Array;
+        if (ethers.getBytes) {
+          merkleRootBytes = ethers.getBytes(merkleRoot);
+        } else {
+          throw new Error('ethers.getBytes not available');
         }
-
-        uploadedFiles.push({
-          name: file.name,
-          hash: fileHashes[i],
-          path: data.path
-        });
+        signature = await wallet.signMessage(merkleRootBytes);
+        
+        if (!signature || signature.length < 100) {
+          throw new Error('Invalid signature generated');
+        }
+      } catch (signError: any) {
+        throw new Error(`Failed to generate signature: ${signError.message}`);
       }
 
-      // 6. Store proof in Supabase database with complete Merkle tree data
+      // Generate Merkle proofs using the SAME tree we created earlier for root
+      // The tree already has sortPairs: true, so just use it to generate proofs
+      
+      // Generate proofs for each leaf (matching backend line 212)
+      const proofs = fileHashes.map((leaf) => {
+        const leafBuffer = Buffer.from(leaf.slice(2), 'hex');
+        return tree.getHexProof(leafBuffer);
+      });
+
+      if (!proofs || proofs.length === 0) {
+        throw new Error('Failed to generate Merkle proofs');
+      }
+
+      // Create proof JSON matching MongoDB schema exactly
+      const explorerUrl = `https://amoy.polygonscan.com/tx/${tx.hash}`;
+      const proofJson = {
+        proofs: [{
+          merkleRoot: merkleRoot,
+          leaves: fileHashes,
+          files: selectedFiles.map(f => f.name),
+          proofs: proofs, // Array of arrays - Merkle proofs for each leaf
+          signature: signature,
+          timestamp: new Date().toISOString()
+        }],
+        network: 'amoy',
+        explorerUrl: explorerUrl,
+        issuerPublicKey: issuerDoc.publicKey
+      };
+
+      // Store proof in Supabase database
+      setUploadStatus("Storing proof in database...");
       const { error: proofError } = await supabase
         .from('proofs')
         .insert({
           issuer_id: issuerId,
           batch: batchName,
           merkle_root: merkleRoot,
-          signature: null, // TODO: Add issuer signature
-          proof_json: {
-            proofs: [
-              {
-                merkleRoot: merkleRoot,
-                leaves: fileHashes, // The actual file hashes
-                files: uploadedFiles.map(f => f.name),
-                proofs: [], // TODO: Calculate Merkle tree proof paths
-                signature: null, // TODO: Add issuer signature
-                timestamp: new Date().toISOString()
-              }
-            ],
-            network: 'amoy',
-            explorerUrl: `https://amoy.polygonscan.com/tx/${tx.hash}`,
-            issuerPublicKey: profile?.public_key || null
-          },
-          file_paths: uploadedFiles.map(f => f.path),
+          signature: signature,
+          proof_json: proofJson,
+          file_paths: selectedFiles.map(f => f.name),
           description: descriptionEl?.value?.trim() || null,
           expiry_date: expiryDateEl?.value || null,
           created_at: new Date().toISOString()
@@ -444,8 +462,10 @@ export const IssueDocument = ({ onUploadComplete }: IssueDocumentProps) => {
         onUploadComplete();
       }
 
-      // Refresh the page to show new documents in dashboard (like real working TrustDoc)
-      window.location.reload();
+      // Navigate to dashboard after successful upload (with delay to show success message)
+      setTimeout(() => {
+        window.location.href = '/dashboard';
+      }, 2000); // 2 second delay to show success message
 
     } catch (error) {
       console.error('Upload error:', error);

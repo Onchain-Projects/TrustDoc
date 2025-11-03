@@ -3,6 +3,7 @@ import { useBlockchainOperations } from '@/hooks/useBlockchain'
 import { hashFileWithKeccak256 } from '@/lib/verification'
 import { ethers } from 'ethers'
 import { MerkleTree } from 'merkletreejs'
+import crypto from 'crypto'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -278,8 +279,8 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({
       const tree = new MerkleTree(
         leavesBuf,
         (data) => {
-          const hash = ethers.keccak256(data)
-          return Buffer.from(hash.slice(2), 'hex')
+          // Use SHA-256 to match Original TrustDoc and IssueDocument implementation
+          return crypto.createHash('sha256').update(data).digest()
         },
         { sortPairs: true }
       )
@@ -288,9 +289,30 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({
       console.log('🌳 Merkle root generated:', merkleRoot)
       
       // Generate Merkle proofs for each document
-      const merkleProofs = leaves.map((_, index) => {
-        const proof = tree.getHexProof(leavesBuf[index])
-        return proof
+      // getHexProof returns hex strings, which is what we need
+      const merkleProofs = leavesBuf.map((leafBuf, index) => {
+        try {
+          const proof = tree.getHexProof(leafBuf)
+          console.log(`   Merkle proof ${index}: ${proof.length} elements`)
+          return proof
+        } catch (proofError: any) {
+          console.error(`   ❌ Error generating proof ${index}:`, proofError)
+          throw new Error(`Failed to generate Merkle proof for file ${index}: ${proofError.message}`)
+        }
+      })
+      
+      console.log(`✅ Generated ${merkleProofs.length} Merkle proofs`)
+      
+      // Validate proofs were generated
+      if (!merkleProofs || merkleProofs.length === 0) {
+        throw new Error('Failed to generate Merkle proofs - proofs array is empty')
+      }
+      
+      // Validate each proof is not empty
+      merkleProofs.forEach((proof, index) => {
+        if (!proof || proof.length === 0) {
+          throw new Error(`Merkle proof ${index} is empty`)
+        }
       })
       
       setMerkleRoot(merkleRoot)
@@ -314,12 +336,12 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({
       setUploadStage('confirming')
       console.log('🔐 Signing Merkle root...')
       
-      // Get issuer's private key
+      // Get issuer's private key (camelCase columns in Supabase)
       const { supabase } = await import('@/lib/supabase')
       const { data: issuerData } = await supabase
         .from('issuers')
-        .select('private_key, public_key')
-        .eq('issuer_id', issuerId)
+        .select('privateKey, publicKey')
+        .eq('issuerId', issuerId)
         .single()
       
       if (!issuerData) {
@@ -327,10 +349,31 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({
       }
 
       // Sign Merkle root
-      const wallet = new ethers.Wallet(issuerData.private_key)
-      const merkleRootBytes = ethers.getBytes(merkleRoot)
+      // Validate private key format
+      if (!issuerData.privateKey || !issuerData.privateKey.startsWith('0x') || issuerData.privateKey.length < 64) {
+        throw new Error('Invalid private key format. Please contact support.')
+      }
+      
+      console.log('   Merkle root to sign:', merkleRoot)
+      console.log('   Private key preview:', issuerData.privateKey.substring(0, 10) + '...')
+      
+      const wallet = new ethers.Wallet(issuerData.privateKey)
+      // MATCHING WORKING BACKEND: Convert hex to bytes first, then signMessage
+      // Working backend uses: ethers.getBytes(merkleRoot) then signMessage(bytes)
+      let merkleRootBytes: Uint8Array
+      if (ethers.getBytes) {
+        merkleRootBytes = ethers.getBytes(merkleRoot)
+      } else {
+        throw new Error('ethers.getBytes not available')
+      }
       const signature = await wallet.signMessage(merkleRootBytes)
-      console.log('✅ Signature generated:', signature)
+      
+      if (!signature || signature.length < 100) {
+        throw new Error('Failed to generate valid signature')
+      }
+      
+      console.log('✅ Signature generated:', signature.substring(0, 30) + '...')
+      console.log('   Signature length:', signature.length)
       
       setUploadProgress(85)
 
@@ -351,10 +394,38 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({
           signature: signature,
           timestamp: new Date().toISOString()
         }],
-        network: 'Polygon Amoy',
+        network: 'amoy', // Match MongoDB format exactly
         explorerUrl: explorerUrl,
-        issuerPublicKey: issuerData.public_key
+        issuerPublicKey: issuerData.publicKey  // Use camelCase property name
       }
+      
+      // Validate signature and proofs before storing
+      if (!signature || signature.length < 100) {
+        throw new Error('Invalid signature: signature is missing or too short')
+      }
+      
+      if (!merkleProofs || merkleProofs.length === 0) {
+        throw new Error('Invalid proofs: Merkle proofs array is empty')
+      }
+      
+      // Validate proof JSON structure
+      if (!proofJson.proofs || proofJson.proofs.length === 0) {
+        throw new Error('Invalid proof JSON: proofs array is empty')
+      }
+      
+      if (!proofJson.proofs[0].signature) {
+        throw new Error('Invalid proof JSON: signature is missing')
+      }
+      
+      if (!proofJson.proofs[0].proofs || proofJson.proofs[0].proofs.length === 0) {
+        throw new Error('Invalid proof JSON: Merkle proofs array is empty')
+      }
+      
+      console.log('\n📋 Validating proof data before storage...')
+      console.log(`   Signature: ${signature.substring(0, 30)}... (${signature.length} chars)`)
+      console.log(`   Merkle proofs: ${merkleProofs.length} proofs`)
+      console.log(`   Proof JSON signature: ${proofJson.proofs[0].signature ? proofJson.proofs[0].signature.substring(0, 30) + '...' : 'MISSING'}`)
+      console.log(`   Proof JSON proofs count: ${proofJson.proofs[0].proofs.length}`)
       
       const proofData = {
         issuer_id: issuerId,
@@ -367,7 +438,11 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({
         description: description || null
       }
 
-      console.log('💾 Storing proof in database:', proofData)
+      console.log('💾 Storing proof in database...')
+      console.log('   Proof data summary:')
+      console.log(`   - signature: ${proofData.signature ? proofData.signature.substring(0, 30) + '...' : 'NULL'}`)
+      console.log(`   - proof_json.proofs[0].signature: ${proofData.proof_json.proofs[0].signature ? proofData.proof_json.proofs[0].signature.substring(0, 30) + '...' : 'NULL'}`)
+      console.log(`   - proof_json.proofs[0].proofs.length: ${proofData.proof_json.proofs[0].proofs.length}`)
       
       const { documentService } = await import('@/lib/documents')
       const proof = await documentService.createProof(proofData)

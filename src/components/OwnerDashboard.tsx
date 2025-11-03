@@ -36,15 +36,40 @@ export const OwnerDashboard = ({ wallet, network, issuerId, onLogout }: OwnerDas
       });
       
       if (accounts.length > 0) {
-        const connectedAddress = accounts[0];
+        let connectedAddress = accounts[0];
         
         // Check if connected wallet is the contract owner
         const ownerAddress = '0x85D7c8df42f4253D8d9e0596cCA500e60f13dce8';
         
         if (connectedAddress.toLowerCase() !== ownerAddress.toLowerCase()) {
-          alert(`❌ Access Denied!\n\nOnly the contract owner can connect to this dashboard.\n\nExpected Owner: ${ownerAddress}\nConnected Wallet: ${connectedAddress}\n\nPlease switch to the owner wallet and try again.`);
-          setIsConnecting(false);
-          return;
+          alert(`❌ Access Denied!\n\nOnly the contract owner can connect to this dashboard.\n\nExpected Owner: ${ownerAddress}\nConnected Wallet: ${connectedAddress}\n\nPlease select the correct owner account in MetaMask.`);
+
+          // Prompt MetaMask to allow selecting a different account
+          try {
+            await window.ethereum.request({
+              method: 'wallet_requestPermissions',
+              params: [{ eth_accounts: {} }],
+            });
+          } catch (permErr) {
+            // Ignore; user may cancel the permissions prompt
+          }
+
+          // Re-request accounts after permission change to allow switching
+          try {
+            const reAccounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+            if (reAccounts && reAccounts.length > 0) {
+              connectedAddress = reAccounts[0];
+            }
+          } catch (reErr) {
+            // If user cancels, stop here
+            throw reErr;
+          }
+
+          // Final owner check after re-selection
+          if (connectedAddress.toLowerCase() !== ownerAddress.toLowerCase()) {
+            alert('Still not the owner account. Please switch to the owner wallet in MetaMask and try again.');
+            return;
+          }
         }
         
         // Switch to Polygon Amoy if not already connected

@@ -11,6 +11,7 @@ interface Document {
   batch: string;
   merkleRoot: string;
   files: string[];
+  filePaths?: string[];
   status: 'uploaded' | 'processing' | 'failed';
   timestamp: string;
   txHash?: string;
@@ -81,7 +82,7 @@ export const IssuerDashboard = ({ onLogout, onNavigate }: IssuerDashboardProps) 
           ],
           network: 'amoy',
           explorerUrl: doc.txHash ? `https://amoy.polygonscan.com/tx/${doc.txHash}` : null,
-          issuerPublicKey: profile?.public_key || null
+          issuerPublicKey: profile?.publicKey || null
         }
       };
       
@@ -133,12 +134,12 @@ export const IssuerDashboard = ({ onLogout, onNavigate }: IssuerDashboardProps) 
     try {
       setIsLoadingDocuments(true);
       
-      if (!user || !profile?.issuer_id) {
-        console.log('No user or issuer_id found:', { user: !!user, issuer_id: profile?.issuer_id });
+      if (!user || !profile?.issuerId) {
+        console.log('No user or issuerId found:', { user: !!user, issuerId: profile?.issuerId });
         return;
       }
 
-      console.log('Fetching documents for issuer:', profile.issuer_id);
+      console.log('Fetching documents for issuer:', profile.issuerId);
 
       // Add retry logic for network issues
       let proofs, error;
@@ -149,7 +150,7 @@ export const IssuerDashboard = ({ onLogout, onNavigate }: IssuerDashboardProps) 
           const result = await supabase
             .from('proofs')
             .select('*')
-            .eq('issuer_id', profile.issuer_id)
+            .eq('issuer_id', profile.issuerId)
             .order('created_at', { ascending: false });
           
           proofs = result.data;
@@ -178,6 +179,7 @@ export const IssuerDashboard = ({ onLogout, onNavigate }: IssuerDashboardProps) 
         batch: proof.batch || 'Unknown',
         merkleRoot: proof.merkle_root,
         files: proof.proof_json?.proofs?.[0]?.files || [],
+        filePaths: proof.file_paths || [],
         status: proof.status === 'valid' ? 'uploaded' : 'failed',
         timestamp: proof.created_at,
         txHash: proof.proof_json?.explorerUrl ? proof.proof_json.explorerUrl.split('/').pop() : null,
@@ -243,7 +245,7 @@ export const IssuerDashboard = ({ onLogout, onNavigate }: IssuerDashboardProps) 
                 </div>
                 <div className="mt-2 flex items-center text-sm text-gray-500">
                   <span className="font-medium text-gray-800 mr-1">ID:</span>
-                  <span>{profile?.issuer_id || "Not set"}</span>
+                  <span>{profile?.issuerId || "Not set"}</span>
                 </div>
               </div>
             </div>
@@ -357,7 +359,7 @@ export const IssuerDashboard = ({ onLogout, onNavigate }: IssuerDashboardProps) 
                   </p>
                   {!searchTerm && (
                     <Button
-                      onClick={() => setShowUploadForm(true)}
+                      onClick={handleIssueDocument}
                       className="bg-blue-600 hover:bg-blue-700"
                     >
                       <Plus className="w-4 h-4 mr-2" />
@@ -374,8 +376,7 @@ export const IssuerDashboard = ({ onLogout, onNavigate }: IssuerDashboardProps) 
                         batch.files.length === 1 ? 'border-gray-200' : 'border-blue-200 bg-blue-50'
                       }`}
                       onClick={() => {
-                        // Handle click - could open details modal
-                        console.log('Clicked on batch:', batch);
+                        handleViewDetails(batch);
                       }}
                     >
                       <div className="flex items-center space-x-3">
@@ -414,8 +415,8 @@ export const IssuerDashboard = ({ onLogout, onNavigate }: IssuerDashboardProps) 
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            if (profile?.issuer_id) {
-                              handleDownloadProof(profile.issuer_id, batch.batch);
+                            if (profile?.issuerId) {
+                              handleDownloadProof(profile.issuerId, batch.batch);
                             }
                           }}
                           className="h-6 w-6 p-0 text-gray-400 hover:text-blue-500 bg-transparent border-none cursor-pointer flex items-center justify-center"
@@ -469,7 +470,7 @@ export const IssuerDashboard = ({ onLogout, onNavigate }: IssuerDashboardProps) 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Issuer ID</label>
-                      <p className="text-sm text-gray-900 mt-1">{profile?.issuer_id || 'N/A'}</p>
+                      <p className="text-sm text-gray-900 mt-1">{profile?.issuerId || 'N/A'}</p>
                     </div>
                     <div>
                       <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Batch</label>
@@ -495,7 +496,10 @@ export const IssuerDashboard = ({ onLogout, onNavigate }: IssuerDashboardProps) 
                   <h4 className="text-sm font-medium text-gray-900 mb-3">Documents</h4>
                   <div className="space-y-2">
                     {selectedBatch.files.map((file, index) => (
-                      <div key={index} className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
+                      <div 
+                        key={index} 
+                        className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg"
+                      >
                         <div className="flex-shrink-0 h-10 w-10 flex items-center justify-center bg-blue-100 rounded-lg">
                           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-file-text h-5 w-5 text-blue-600">
                             <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path>
@@ -555,8 +559,8 @@ export const IssuerDashboard = ({ onLogout, onNavigate }: IssuerDashboardProps) 
               </Button>
               <Button
                 onClick={() => {
-                  if (profile?.issuer_id) {
-                    handleDownloadProof(profile.issuer_id, selectedBatch.batch);
+                  if (profile?.issuerId) {
+                    handleDownloadProof(profile.issuerId, selectedBatch.batch);
                   }
                   setShowDetailsModal(false);
                 }}

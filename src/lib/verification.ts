@@ -2,6 +2,7 @@ import { ethers } from 'ethers'
 import { MerkleTree } from 'merkletreejs'
 import { supabase } from './supabase'
 import { CONTRACT_CONFIG, TRUSTDOC_ABI } from './blockchain/contract'
+import { sha256 } from 'js-sha256'
 
 /**
  * Generate keccak256 hash from file buffer (matches Real TrustDoc)
@@ -21,10 +22,12 @@ function normalizeHash(hash: string): string {
 
 /**
  * SHA-256 hash function for Merkle tree (not for file hashing!)
+ * This matches IssueDocument.tsx line 177-181
  */
-function sha256(data: Buffer): Buffer {
-  const hash = ethers.keccak256(data)
-  return Buffer.from(hash.slice(2), 'hex')
+function sha256Hash(data: Buffer | string): Buffer {
+  const dataBuffer = typeof data === 'string' ? Buffer.from(data.slice(2), 'hex') : data;
+  const hashHex = sha256(dataBuffer);
+  return Buffer.from(hashHex, 'hex');
 }
 
 export interface VerificationResult {
@@ -124,10 +127,7 @@ export async function verifyDocument(file: File): Promise<VerificationResult> {
     )
     const tree = new MerkleTree(
       leavesBuf,
-      (data) => {
-        const hash = ethers.keccak256(data)
-        return Buffer.from(hash.slice(2), 'hex')
-      },
+      sha256Hash,
       { sortPairs: true }
     )
     const computedRoot = '0x' + tree.getRoot().toString('hex')
@@ -172,7 +172,7 @@ export async function verifyDocument(file: File): Promise<VerificationResult> {
       )
       
       const rootHex = normalizeHash(proofData.merkleRoot)
-      const exists = await contract.roots_map(rootHex)
+      const exists = await contract.getRootTimestamp(rootHex)
       onChain = exists && exists.toString() !== '0'
       console.log('⛓️ On-chain verification:', onChain ? 'SUCCESS' : 'FAILED')
       
@@ -202,14 +202,14 @@ export async function verifyDocument(file: File): Promise<VerificationResult> {
       if (!proofData.signature) {
         signatureReason = 'Signature missing in proof'
       } else {
-        // Fetch issuer's public key
-        const { data: issuerDoc, error: issuerError } = await supabase
-          .from('issuers')
-          .select('public_key, name, email')
-          .eq('issuer_id', issuerId)
-          .single()
+      // Fetch issuer's public key (camelCase columns in Supabase)
+      const { data: issuerDoc, error: issuerError } = await supabase
+        .from('issuers')
+        .select('publicKey, name, email')
+        .eq('issuerId', issuerId)
+        .single()
         
-        if (issuerError || !issuerDoc || !issuerDoc.public_key) {
+        if (issuerError || !issuerDoc || !issuerDoc.publicKey) {
           signatureReason = 'Issuer public key not found'
         } else {
           // Verify signature using ethers
@@ -225,7 +225,7 @@ export async function verifyDocument(file: File): Promise<VerificationResult> {
           // Compute issuer address from public key
           let issuerAddress: string
           try {
-            issuerAddress = ethers.computeAddress(issuerDoc.public_key)
+            issuerAddress = ethers.computeAddress(issuerDoc.publicKey)
             console.log('- Issuer address:', issuerAddress)
           } catch (e) {
             issuerAddress = 'Error computing address'
@@ -266,7 +266,7 @@ export async function verifyDocument(file: File): Promise<VerificationResult> {
       const { data: issuerDoc } = await supabase
         .from('issuers')
         .select('name, email')
-        .eq('issuer_id', issuerId)
+        .eq('issuerId', issuerId)
         .single()
       
       if (issuerDoc) {
@@ -356,14 +356,14 @@ export async function verifyByMerkleRoot(merkleRoot: string): Promise<Verificati
       provider
     )
     
-    const exists = await contract.roots_map(normalizedRoot)
+    const exists = await contract.getRootTimestamp(normalizedRoot)
     const onChain = exists && exists.toString() !== '0'
     
     // Get issuer details
     const { data: issuerDoc } = await supabase
       .from('issuers')
       .select('name, email')
-      .eq('issuer_id', proof.issuer_id)
+      .eq('issuerId', proof.issuer_id)
       .single()
     
     const issuerName = issuerDoc?.name || issuerDoc?.email || 'Unknown Issuer'

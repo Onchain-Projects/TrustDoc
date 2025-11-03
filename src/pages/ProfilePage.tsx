@@ -31,9 +31,9 @@ export const ProfilePage = ({
 
   // Get data from authentication context
   const issuerName = profile?.name || "Unknown Issuer";
-  const issuerId = profile?.issuer_id || "Unknown ID";
-  const publicKey = profile?.public_key || "No public key available";
-  const privateKey = profile?.private_key || "No private key available";
+  const issuerId = profile?.issuerId || "Unknown ID";
+  const publicKey = profile?.publicKey || "No public key available";
+  const privateKey = profile?.privateKey || "No private key available";
 
   const handleShowPrivateKey = () => {
     setShowPrivateKey(!showPrivateKey);

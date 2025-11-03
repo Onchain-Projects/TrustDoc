@@ -41,20 +41,12 @@ export interface Issuer {
   email: string
   password: string
   address: string
-  issuer_id: string
+  issuerId: string  // camelCase to match database
   name: string
-  public_key: string
-  private_key: string
-  meta_mask_address: string
-  is_approved: boolean
-  approved_by?: string
-  approval_date?: string
-  approval_notes?: string
-  blockchain_address?: string
-  blockchain_registration_tx?: string
-  worker_addition_tx?: string
-  created_at: string
-  updated_at: string
+  publicKey: string  // camelCase to match database
+  privateKey: string  // camelCase to match database
+  metaMaskAddress: string  // camelCase to match database
+  createdAt: string  // camelCase to match database
 }
 
 export interface Owner {

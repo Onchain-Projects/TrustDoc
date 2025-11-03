@@ -5,9 +5,9 @@ import { HomePage } from "@/pages/HomePage";
 import { VerifyDoc } from "@/components/VerifyDoc";
 import { RegisterIssuer } from "@/components/RegisterIssuer";
 import { IssuerDashboard } from "@/components/IssuerDashboard";
+import { OwnerDashboard } from "@/components/OwnerDashboard";
 import { IssueDocument } from "@/components/IssueDocument";
 import { ProfilePage } from "@/pages/ProfilePage";
-import { OwnerDashboardPage } from "@/pages/OwnerDashboardPage";
 import { UploadModal } from "@/components/ui/upload-modal";
 import { ToastNotifications, useToasts } from "@/components/ui/toast-notifications";
 import { useAuthContext } from "@/contexts/AuthContext";
@@ -30,22 +30,17 @@ const Index = () => {
     // Navigate based on user type from the login result or current auth state
     const detectedUserType = loginResult?.userType || userType;
     
-    if (detectedUserType === 'owner') {
-      setCurrentPage('owner-dashboard');
-      showSuccess('Login successful', 'Welcome back to TrustDoc!');
-    } else {
-      setCurrentPage('dashboard');
-      showSuccess('Login successful', 'Welcome back to TrustDoc!');
-    }
+    // Always navigate to unified dashboard; render will choose owner vs issuer
+    setCurrentPage('dashboard');
+    showSuccess('Login successful', 'Welcome back to TrustDoc!');
   };
 
   const handleRegister = (userData: any) => {
-    // Navigate based on user type
+    // Unified dashboard; rendering chooses by role
+    setCurrentPage('dashboard');
     if (userData.userType === 'owner') {
-      setCurrentPage('owner-dashboard');
       showSuccess('Registration successful', 'Your owner account has been created');
     } else {
-      setCurrentPage('dashboard');
       showSuccess('Registration successful', 'Your issuer account has been created');
     }
   };
@@ -107,12 +102,16 @@ const Index = () => {
         );
       case 'dashboard':
         return isLoggedIn ? (
-          <IssuerDashboard onLogout={handleLogout} onNavigate={handleNavigation} />
+          userType === 'owner' ? (
+            <OwnerDashboard wallet={null} network={null} issuerId={null} onLogout={handleLogout} />
+          ) : (
+            <IssuerDashboard onLogout={handleLogout} onNavigate={handleNavigation} />
+          )
         ) : (
           <HomePage onNavigate={handleNavigation} />
         );
       case 'issue':
-        return isLoggedIn ? (
+        return isLoggedIn && userType !== 'owner' ? (
           <IssueDocument onUploadComplete={() => {
             showSuccess('Document issued', 'Your document has been successfully issued and anchored on the blockchain');
           }} />
@@ -125,12 +124,7 @@ const Index = () => {
         ) : (
           <HomePage onNavigate={handleNavigation} />
         );
-      case 'owner-dashboard':
-        return isLoggedIn && userType === 'owner' ? (
-          <OwnerDashboardPage />
-        ) : (
-          <HomePage onNavigate={handleNavigation} />
-        );
+      
       default:
         return <HomePage onNavigate={handleNavigation} />;
     }

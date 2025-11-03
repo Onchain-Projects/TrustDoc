@@ -72,16 +72,11 @@ export const authService = {
             email: data.email,
             password: data.password, // In production, this should be hashed
             address: data.address,
-            issuer_id: issuerId,
+            issuerId: issuerId,
             name: data.name,
-            public_key: keyPair.publicKey,
-            private_key: keyPair.privateKey, // This will be replaced by encrypted storage
-            meta_mask_address: data.metaMaskAddress || '',
-            key_type: keyPair.algorithm,
-            key_size: keyPair.keySize,
-            key_created_at: keyPair.createdAt.toISOString(),
-            is_key_active: true,
-            is_approved: false, // New issuers require owner approval
+            publicKey: keyPair.publicKey,
+            privateKey: keyPair.privateKey, // This will be replaced by encrypted storage
+            metaMaskAddress: data.metaMaskAddress || '',
           })
 
         if (issuerError) throw issuerError

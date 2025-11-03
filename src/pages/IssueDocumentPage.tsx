@@ -19,7 +19,6 @@ import {
   AlertTriangle
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import { QRCodeGenerator } from '@/components/ui/qr-code'
 
 // Worker Status Check Component
 const WorkerStatusCard: React.FC<{
@@ -245,6 +244,11 @@ export const IssueDocumentPage: React.FC = () => {
     setUploadComplete(true)
     setUploadResult(result)
     setError('')
+    
+    // Automatically navigate to dashboard after a short delay to show success message
+    setTimeout(() => {
+      navigate('/dashboard')
+    }, 2000) // 2 second delay to show success message
   }
 
   const handleUploadError = (error: string) => {
@@ -321,7 +325,7 @@ export const IssueDocumentPage: React.FC = () => {
                   </CardHeader>
                   <CardContent>
                     <DocumentUploader
-                      issuerId={profile?.issuer_id || ''}
+                      issuerId={profile?.issuerId || ''}
                       mode={issuanceMode}
                       onModeChange={setIssuanceMode}
                       onUploadComplete={handleUploadComplete}
@@ -388,16 +392,6 @@ export const IssueDocumentPage: React.FC = () => {
                       </div>
                     </CardContent>
                   </Card>
-                )}
-
-                {/* QR Code for Issued Document */}
-                {uploadComplete && uploadResult && (
-                  <QRCodeGenerator
-                    merkleRoot={uploadResult.merkleRoot}
-                    documentName={uploadResult.documentName || "Issued Document"}
-                    issuerName={profile?.name || "Issuer"}
-                    issueDate={new Date().toISOString()}
-                  />
                 )}
 
                 {/* Error Display */}

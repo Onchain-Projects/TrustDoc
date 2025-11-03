@@ -7,7 +7,6 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import Index from "./pages/Index";
 import { IssueDocumentPage } from "./pages/IssueDocumentPage";
 import { VerifyDocumentPage } from "./pages/VerifyDocumentPage";
-import { OwnerDashboardPage } from "./pages/OwnerDashboardPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { DashboardPage } from "./pages/DashboardPage";
 import NotFound from "./pages/NotFound";
@@ -25,7 +24,6 @@ const App = () => (
             <Route path="/" element={<Index />} />
             <Route path="/issue" element={<IssueDocumentPage />} />
             <Route path="/verify" element={<VerifyDocumentPage />} />
-            <Route path="/owner/dashboard" element={<OwnerDashboardPage />} />
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/profile" element={<ProfilePage />} />
             <Route path="*" element={<NotFound />} />

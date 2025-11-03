@@ -135,10 +135,10 @@ export const DocumentVerifier: React.FC<DocumentVerifierProps> = ({
       <div>
         <div
           ref={dropRef}
-          className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
+          className={`relative border-2 border-dashed rounded-xl p-10 text-center transition-all duration-300 ${
             dragActive 
-              ? 'border-primary bg-primary/5' 
-              : 'border-muted-foreground/25 hover:border-primary/50'
+              ? 'border-primary bg-gradient-to-br from-primary/10 to-purple-500/10 scale-[1.02] shadow-lg shadow-primary/20' 
+              : 'border-muted-foreground/30 hover:border-primary/60 hover:bg-muted/30 hover:shadow-md'
           } ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
           onDragEnter={handleDrag}
           onDragLeave={handleDrag}
@@ -146,16 +146,39 @@ export const DocumentVerifier: React.FC<DocumentVerifierProps> = ({
           onDrop={handleDrop}
           onClick={() => !disabled && fileInputRef.current?.click()}
         >
-          <Shield className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-          <p className="text-lg font-medium mb-2">
-            {dragActive ? 'Drop your document here' : 'Upload Document to Verify'}
-          </p>
-          <p className="text-sm text-muted-foreground mb-4">
-            Click to upload or drag and drop your document
-          </p>
-          <p className="text-xs text-muted-foreground">
-            Supported formats: PDF, DOC, DOCX, TXT, JPG, PNG, XLS, XLSX
-          </p>
+          <div className={`absolute inset-0 rounded-xl transition-opacity duration-300 ${
+            dragActive ? 'bg-gradient-to-br from-primary/5 to-purple-500/5 opacity-100' : 'opacity-0'
+          }`} />
+          <div className="relative z-10">
+            <div className={`mx-auto w-20 h-20 rounded-full flex items-center justify-center mb-6 transition-all duration-300 ${
+              dragActive 
+                ? 'bg-gradient-to-br from-primary to-purple-600 shadow-xl shadow-primary/30 scale-110' 
+                : 'bg-gradient-to-br from-primary/10 to-purple-500/10 hover:scale-105'
+            }`}>
+              <Shield className={`w-10 h-10 transition-colors duration-300 ${
+                dragActive ? 'text-white' : 'text-primary'
+              }`} />
+            </div>
+            <p className="text-xl font-semibold mb-3">
+              {dragActive ? (
+                <span className="bg-gradient-to-r from-primary to-purple-600 bg-clip-text text-transparent">
+                  Drop your document here
+                </span>
+              ) : (
+                <>
+                  <span className="bg-gradient-to-r from-primary to-purple-600 bg-clip-text text-transparent">
+                    Upload Document to Verify
+                  </span>
+                </>
+              )}
+            </p>
+            <p className="text-sm text-muted-foreground mb-4">
+              Click to upload or drag and drop your document
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Supported formats: PDF, DOC, DOCX, TXT, JPG, PNG, XLS, XLSX
+            </p>
+          </div>
         </div>
         
         <input
@@ -170,13 +193,15 @@ export const DocumentVerifier: React.FC<DocumentVerifierProps> = ({
 
       {/* Selected File */}
       {file && (
-        <div className="border rounded-lg p-4 bg-muted/50">
+        <div className="border rounded-xl p-5 bg-gradient-to-r from-muted/60 to-muted/40 shadow-md hover:shadow-lg transition-all duration-300">
           <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <FileText className="w-8 h-8 text-primary" />
+            <div className="flex items-center space-x-4">
+              <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-primary to-purple-600 flex items-center justify-center shadow-md">
+                <FileText className="w-6 h-6 text-white" />
+              </div>
               <div>
-                <p className="font-medium">{file.name}</p>
-                <p className="text-sm text-muted-foreground">
+                <p className="font-semibold text-foreground">{file.name}</p>
+                <p className="text-sm text-muted-foreground mt-0.5">
                   {formatFileSize(file.size)} • {file.type}
                 </p>
               </div>
@@ -186,6 +211,7 @@ export const DocumentVerifier: React.FC<DocumentVerifierProps> = ({
               size="sm"
               onClick={removeFile}
               disabled={disabled}
+              className="hover:bg-destructive/10 hover:text-destructive"
             >
               <XCircle className="w-4 h-4" />
             </Button>

@@ -67,17 +67,19 @@ export const Header = ({ currentPage, onNavigate, wallet, isLoggedIn, onLogout, 
                 >
                   Dashboard
                 </a>
-                <a
-                  className={`px-3 py-2 rounded-md text-sm font-medium transition-colors duration-200 ${
-                    currentPage === 'issue' 
-                      ? 'text-blue-700 bg-blue-50' 
-                      : 'text-gray-600 hover:text-blue-700 hover:bg-blue-50'
-                  }`}
-                  onClick={() => onNavigate('issue')}
-                  style={{ cursor: 'pointer' }}
-                >
-                  Issue Document
-                </a>
+                {!isOwner && (
+                  <a
+                    className={`px-3 py-2 rounded-md text-sm font-medium transition-colors duration-200 ${
+                      currentPage === 'issue' 
+                        ? 'text-blue-700 bg-blue-50' 
+                        : 'text-gray-600 hover:text-blue-700 hover:bg-blue-50'
+                    }`}
+                    onClick={() => onNavigate('issue')}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    Issue Document
+                  </a>
+                )}
               </>
             )}
           </nav>

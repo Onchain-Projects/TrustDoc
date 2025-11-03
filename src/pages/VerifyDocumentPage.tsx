@@ -34,7 +34,7 @@ export const VerifyDocumentPage: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background py-8">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 py-8">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Header */}
         <div className="flex items-center justify-between mb-8">
@@ -60,10 +60,10 @@ export const VerifyDocumentPage: React.FC = () => {
           {/* Main Content */}
           <div className="lg:col-span-2 space-y-6">
             {/* Document Verifier */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center space-x-2">
-                  <Shield className="w-5 h-5 text-primary" />
+            <Card className="shadow-xl border border-gray-100 hover:shadow-2xl transition-shadow duration-300">
+              <CardHeader className="bg-gradient-to-r from-primary to-purple-600 text-white rounded-t-lg">
+                <CardTitle className="flex items-center space-x-2 text-white">
+                  <Shield className="w-5 h-5" />
                   <span>Document Verification</span>
                 </CardTitle>
               </CardHeader>
@@ -78,9 +78,15 @@ export const VerifyDocumentPage: React.FC = () => {
 
             {/* Verification Result */}
             {verificationResult && (
-              <Card className={verificationResult.valid ? "bg-green-50 border-green-200" : "bg-red-50 border-red-200"}>
-                <CardHeader>
-                  <CardTitle className={`flex items-center space-x-2 ${verificationResult.valid ? "text-green-800" : "text-red-800"}`}>
+              <Card className={`shadow-xl transition-all duration-300 ${
+                verificationResult.valid 
+                  ? "bg-gradient-to-br from-green-50 to-emerald-50 border-green-300 hover:shadow-2xl" 
+                  : "bg-gradient-to-br from-red-50 to-pink-50 border-red-300 hover:shadow-2xl"
+              }`}>
+                <CardHeader className="bg-gradient-to-r from-white/50 to-transparent">
+                  <CardTitle className={`flex items-center space-x-3 text-xl ${
+                    verificationResult.valid ? "text-green-800" : "text-red-800"
+                  }`}>
                     {verificationResult.valid ? (
                       <CheckCircle className="w-5 h-5" />
                     ) : (
