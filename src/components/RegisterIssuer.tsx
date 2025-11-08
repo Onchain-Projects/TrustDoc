@@ -9,6 +9,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { useAuthContext } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
+import { ethers } from "ethers";
+import { CONTRACT_CONFIG } from "@/lib/blockchain/contract";
 
 interface RegisterIssuerProps {
   onRegister?: (data: { id: string; name: string; email: string; address: string; type: string }) => void;
@@ -39,6 +41,7 @@ export const RegisterIssuer = ({ onRegister, onLogin, defaultTab = "new" }: Regi
   const [registrationMessage, setRegistrationMessage] = useState("");
   const [showErrorModal, setShowErrorModal] = useState(false);
   const [errorModalMessage, setErrorModalMessage] = useState("");
+  const [isRegistering, setIsRegistering] = useState(false); // Prevent double submission
   
   // Existing Issuer State
   const [loginEmail, setLoginEmail] = useState("");
@@ -67,6 +70,12 @@ export const RegisterIssuer = ({ onRegister, onLogin, defaultTab = "new" }: Regi
   };
 
   const handleRegister = async () => {
+    // CRITICAL FIX: Prevent double submission
+    if (isRegistering) {
+      console.warn('Registration already in progress, ignoring duplicate request');
+      return;
+    }
+
     if (!name.trim() || !email.trim() || !password.trim()) {
       setRegistrationMessage("Please fill in all fields");
       return;
@@ -77,11 +86,50 @@ export const RegisterIssuer = ({ onRegister, onLogin, defaultTab = "new" }: Regi
       return;
     }
 
+    setIsRegistering(true);
     setRegistrationMessage("Registering...");
 
     try {
       clearError();
       setRegistrationMessage("");
+
+      // CRITICAL FIX: Check if email already exists FIRST, before doing anything else
+      console.log('🔍 Checking if email already exists BEFORE registration:', email.trim());
+      const { data: existingIssuer, error: checkError } = await supabase
+        .from('issuers')
+        .select('email, issuerId, name')
+        .eq('email', email.trim())
+        .maybeSingle();
+
+      if (checkError && checkError.code !== 'PGRST116') {
+        // PGRST116 means no rows found, which is fine
+        console.error('Error checking existing issuer:', checkError);
+        throw new Error(`Failed to check existing issuer: ${checkError.message}`);
+      }
+
+      if (existingIssuer) {
+        // Email already exists - STOP HERE before doing anything
+        const errorMessage = 
+          `❌ Email already registered!\n\n` +
+          `The email "${email.trim()}" is already registered as an issuer.\n\n` +
+          `Issuer ID: ${existingIssuer.issuerId || 'N/A'}\n` +
+          `Name: ${existingIssuer.name || 'N/A'}\n\n` +
+          `Please use the "Login" tab to access your existing account, or use a different email address.`;
+        
+        setRegistrationMessage(errorMessage);
+        setErrorModalMessage(errorMessage);
+        setShowErrorModal(true);
+        
+        // Auto-switch to login tab after 3 seconds to help user
+        setTimeout(() => {
+          setActiveTab('existing');
+          setLoginEmail(email.trim()); // Pre-fill the email in login form
+        }, 3000);
+        
+        throw new Error(errorMessage);
+      }
+
+      console.log('✅ Email is available, proceeding with registration...');
       
       // Generate issuerId and keys like working TrustDoc
       const issuerId = `ISSUER_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -130,13 +178,271 @@ export const RegisterIssuer = ({ onRegister, onLogin, defaultTab = "new" }: Regi
         throw new Error('System configuration error. Please contact TrustDoc support for assistance.');
       }
       
-      const { contract: ownerContract } = getContractInstance(true);
-      const tx = await ownerContract.registerIssuer(issuerId, address, name.trim());
-      await tx.wait();
+      // Verify the owner's private key corresponds to the contract owner
+      // Reuse getContractInstance that was already imported above
+      const { contract: ownerContract, wallet: ownerWallet, provider: ownerProvider } = getContractInstance(true);
+      
+      // Get the contract owner address
+      let contractOwnerAddress: string;
+      try {
+        contractOwnerAddress = await ownerContract.owner();
+        console.log('📋 Contract owner address (from blockchain):', contractOwnerAddress);
+      } catch (error) {
+        console.error('Error getting contract owner:', error);
+        throw new Error('Failed to verify contract owner. Please check your configuration.');
+      }
+      
+      // Verify the wallet address matches the contract owner
+      const walletAddressFromKey = await ownerWallet.getAddress();
+      console.log('🔑 Wallet address from private key:', walletAddressFromKey);
+      console.log('📋 Contract owner address:', contractOwnerAddress);
+      
+      // Normalize addresses for comparison (lowercase)
+      const walletAddressLower = walletAddressFromKey.toLowerCase();
+      const contractOwnerLower = contractOwnerAddress.toLowerCase();
+      
+      if (walletAddressLower !== contractOwnerLower) {
+        // Provide helpful error message with both addresses
+        const errorMessage = 
+          `❌ Private Key Mismatch!\n\n` +
+          `The private key in your .env file corresponds to:\n` +
+          `  ${walletAddressFromKey}\n\n` +
+          `But the contract owner is:\n` +
+          `  ${contractOwnerAddress}\n\n` +
+          `You mentioned the owner should be:\n` +
+          `  0x387328443646581612e6e83b32CEC5D391edD70E\n\n` +
+          `Please verify:\n` +
+          `1. Check the contract owner on PolygonScan: https://amoy.polygonscan.com/address/${CONTRACT_CONFIG.address}\n` +
+          `2. Use the private key for the address that actually owns the contract\n` +
+          `3. Update VITE_PRIVATE_KEY in your .env file with the correct owner private key`;
+        
+        throw new Error(errorMessage);
+      }
+      
+      console.log('✅ Private key matches contract owner!');
+      
+      // The contract expects uint256 type for pubKey
+      // Convert address to uint256 (BigInt) as required by the contract
+      const formattedAddress = address.startsWith('0x') ? address : `0x${address}`;
+      
+      // Validate address format
+      if (!ethers.isAddress(formattedAddress)) {
+        throw new Error(`Invalid address format: ${formattedAddress}`);
+      }
+      
+      // Convert address to uint256 (BigInt) as required by the contract
+      const pubKeyAsUint256 = BigInt(formattedAddress);
+      
+      console.log('Registering issuer with:', {
+        issuerId,
+        pubKey: pubKeyAsUint256.toString(),
+        pubKeyAddress: formattedAddress,
+        name: name.trim(),
+        from: walletAddressFromKey
+      });
+      
+      // Get current gas price from network
+      const feeData = await ownerProvider.getFeeData();
+      console.log('Current fee data:', {
+        gasPrice: feeData.gasPrice?.toString(),
+        gasPriceGwei: feeData.gasPrice ? ethers.formatUnits(feeData.gasPrice, 'gwei') : 'N/A',
+        maxFeePerGas: feeData.maxFeePerGas?.toString(),
+        maxPriorityFeePerGas: feeData.maxPriorityFeePerGas?.toString()
+      });
+      
+      // For Polygon Amoy, use LEGACY gasPrice (more reliable than EIP-1559)
+      // Use network's gasPrice with significant buffer to ensure transaction goes through
+      const gasOptions: any = {};
+      
+      if (feeData.gasPrice) {
+        // Use network's gasPrice with 100% buffer (double) for Polygon Amoy to ensure it goes through
+        // This ensures the transaction is prioritized and confirms quickly
+        const networkGasPrice = feeData.gasPrice;
+        const bufferedGasPrice = networkGasPrice * 200n / 100n; // Double the gas price (100% buffer)
+        
+        // Ensure minimum of 60 gwei for Polygon Amoy
+        const minGasPrice = ethers.parseUnits('60', 'gwei');
+        gasOptions.gasPrice = bufferedGasPrice > minGasPrice ? bufferedGasPrice : minGasPrice;
+        
+        // Use legacy gasPrice instead of EIP-1559 for better compatibility with Polygon
+        console.log('Using LEGACY gas pricing (more reliable for Polygon):', {
+          networkGasPriceGwei: ethers.formatUnits(networkGasPrice, 'gwei'),
+          bufferedGasPrice: gasOptions.gasPrice.toString(),
+          bufferedGasPriceGwei: ethers.formatUnits(gasOptions.gasPrice, 'gwei')
+        });
+      } else {
+        // Fallback: use very high gas price if network data unavailable
+        gasOptions.gasPrice = ethers.parseUnits('100', 'gwei'); // 100 gwei fallback
+        console.log('Using fallback gas pricing: 100 gwei');
+      }
+      
+      // Estimate gas limit for the transaction
+      try {
+        const estimatedGas = await ownerContract.registerIssuer.estimateGas(
+          issuerId, 
+          pubKeyAsUint256, 
+          name.trim()
+        );
+        gasOptions.gasLimit = estimatedGas * 120n / 100n; // Add 20% buffer
+        console.log('Gas limit estimated:', {
+          estimated: estimatedGas.toString(),
+          withBuffer: gasOptions.gasLimit.toString()
+        });
+      } catch (gasError) {
+        console.warn('Gas estimation failed, using default:', gasError);
+        gasOptions.gasLimit = 200000n; // Default gas limit
+      }
+      
+      // Get the correct nonce (pending count) to allow transaction even with pending transactions
+      // This ensures the transaction is queued properly behind any pending transactions
+      const pendingNonce = await ownerProvider.getTransactionCount(await ownerWallet.getAddress(), 'pending');
+      const latestNonce = await ownerProvider.getTransactionCount(await ownerWallet.getAddress(), 'latest');
+      
+      console.log('Transaction nonce info:', {
+        pending: pendingNonce,
+        latest: latestNonce,
+        hasPending: pendingNonce > latestNonce,
+        willUseNonce: pendingNonce
+      });
+      
+      // Use pending nonce so transaction can proceed even with pending transactions
+      // This queues the transaction properly behind any pending ones
+      gasOptions.nonce = pendingNonce;
+      
+      // Call registerIssuer with uint256 type (as per contract) and gas options
+      console.log('Submitting transaction with gas options:', {
+        ...gasOptions,
+        nonce: gasOptions.nonce,
+        gasPriceGwei: ethers.formatUnits(gasOptions.gasPrice, 'gwei')
+      });
+      
+      // Submit transaction - use sendTransaction for more control
+      console.log('Preparing transaction call...');
+      
+      // Build the transaction data
+      const txData = ownerContract.interface.encodeFunctionData('registerIssuer', [
+        issuerId,
+        pubKeyAsUint256,
+        name.trim()
+      ]);
+      
+      console.log('Transaction data prepared. Submitting...');
+      
+      // Submit transaction with explicit gas options
+      const tx = await ownerWallet.sendTransaction({
+        to: CONTRACT_CONFIG.address,
+        data: txData,
+        gasPrice: gasOptions.gasPrice,
+        gasLimit: gasOptions.gasLimit || 200000n,
+        nonce: gasOptions.nonce
+      });
+      
+      console.log('✅ Transaction submitted successfully!');
+      console.log('Transaction hash:', tx.hash);
+      console.log('Transaction URL:', `https://amoy.polygonscan.com/tx/${tx.hash}`);
+      console.log('Nonce:', tx.nonce);
+      console.log('Gas price:', ethers.formatUnits(gasOptions.gasPrice, 'gwei'), 'gwei');
+      
+      // Verify transaction was broadcast to network immediately
+      console.log('Verifying transaction was broadcast...');
+      try {
+        const broadcastTx = await ownerProvider.getTransaction(tx.hash);
+        if (broadcastTx) {
+          console.log('✅ Transaction broadcast confirmed!', {
+            hash: broadcastTx.hash,
+            nonce: broadcastTx.nonce,
+            gasPrice: broadcastTx.gasPrice?.toString(),
+            from: broadcastTx.from
+          });
+        }
+      } catch (error) {
+        console.warn('Transaction not found in mempool yet, may take a moment...');
+      }
+      
+      // Wait for transaction confirmation with polling
+      let receipt = null;
+      let attempts = 0;
+      const maxAttempts = 60; // Check for 60 seconds (1 minute)
+      
+      console.log('Waiting for transaction confirmation...');
+      console.log('You can monitor at:', `https://amoy.polygonscan.com/tx/${tx.hash}`);
+      
+      while (attempts < maxAttempts && !receipt) {
+        try {
+          receipt = await ownerProvider.getTransactionReceipt(tx.hash);
+          if (receipt) {
+            console.log('✅ Transaction confirmed!', {
+              hash: receipt.hash,
+              blockNumber: receipt.blockNumber,
+              gasUsed: receipt.gasUsed?.toString(),
+              status: receipt.status === 1 ? 'Success' : 'Failed'
+            });
+            
+            if (receipt.status !== 1) {
+              throw new Error('Transaction failed on blockchain');
+            }
+            break;
+          }
+        } catch (error) {
+          // Transaction not confirmed yet, continue waiting
+        }
+        
+        // Wait 1 second before next check
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        attempts++;
+        
+        if (attempts % 10 === 0) {
+          console.log(`⏳ Still waiting for confirmation... (${attempts}/${maxAttempts} seconds)`);
+        }
+      }
+      
+      if (!receipt) {
+        // Transaction submitted but not confirmed within timeout
+        console.warn('⚠️ Transaction submitted but not confirmed within 60 seconds.');
+        console.log('Transaction hash:', tx.hash);
+        console.log('This is normal - transactions can take 1-5 minutes to confirm.');
+        console.log('Check status at:', `https://amoy.polygonscan.com/tx/${tx.hash}`);
+        
+        // Continue anyway - transaction is submitted and will confirm
+        setRegistrationMessage(
+          `Transaction submitted successfully!\n\n` +
+          `Hash: ${tx.hash}\n\n` +
+          `The transaction is being processed on the blockchain. ` +
+          `It may take 1-5 minutes to confirm.\n\n` +
+          `Check status: https://amoy.polygonscan.com/tx/${tx.hash}\n\n` +
+          `Registration will complete once the transaction confirms.`
+        );
+      }
+
+      // CRITICAL FIX: Create user in Supabase Auth FIRST, then create issuer record
+      console.log('🔐 Creating user in Supabase Auth...');
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email: email.trim(),
+        password: password,
+        options: {
+          data: {
+            name: name.trim(),
+            user_type: 'issuer',
+            issuer_id: issuerId,
+          }
+        }
+      });
+
+      if (authError) {
+        console.error('Supabase Auth signup error:', authError);
+        // If user already exists in Auth, that's okay - continue with issuer creation
+        if (authError.message && !authError.message.includes('already registered')) {
+          throw new Error(`Failed to create user account: ${authError.message}`);
+        }
+        console.warn('User may already exist in Supabase Auth, continuing with issuer creation...');
+      } else {
+        console.log('✅ User created in Supabase Auth:', authData.user?.id);
+      }
 
       // Create issuer in Supabase database
+      // NOTE: Email check was already done at the beginning, so we can safely insert now
       // NOTE: Column names are camelCase (issuerId, privateKey, publicKey, metaMaskAddress) not snake_case
-      const { error: issuerError } = await supabase
+      const { data: newIssuer, error: issuerError } = await supabase
         .from('issuers')
         .insert({
           email: email.trim(),
@@ -147,11 +453,30 @@ export const RegisterIssuer = ({ onRegister, onLogin, defaultTab = "new" }: Regi
           publicKey: publicKey,  // Use camelCase column name - REAL cryptographic key
           privateKey: privateKey,  // Use camelCase column name - REAL cryptographic key
           metaMaskAddress: userAddress // Use camelCase column name - Store the user's MetaMask address
-        });
+        })
+        .select()
+        .single();
 
       if (issuerError) {
-        throw new Error(issuerError.message);
+        // Handle specific error codes
+        if (issuerError.code === '23505' || issuerError.message.includes('duplicate key') || issuerError.message.includes('unique constraint')) {
+          const errorMessage = 
+            `❌ Registration failed: Email "${email.trim()}" is already registered.\n\n` +
+            `This email is already associated with an existing issuer account.\n\n` +
+            `Please use the "Login" tab to access your account, or use a different email address.`;
+          
+          setRegistrationMessage(errorMessage);
+          setErrorModalMessage(errorMessage);
+          setShowErrorModal(true);
+          throw new Error(errorMessage);
+        }
+        
+        // Other errors
+        console.error('Supabase insert error:', issuerError);
+        throw new Error(`Failed to create issuer: ${issuerError.message}`);
       }
+
+      console.log('✅ Issuer created successfully in database:', newIssuer?.issuerId);
 
       setRegistrationMessage("Registration successful! You can now login.");
       
@@ -166,6 +491,9 @@ export const RegisterIssuer = ({ onRegister, onLogin, defaultTab = "new" }: Regi
       }
     } catch (error) {
       setRegistrationMessage(error instanceof Error ? error.message : "Registration failed");
+    } finally {
+      // CRITICAL FIX: Always reset the registration flag
+      setIsRegistering(false);
     }
   };
 
@@ -387,12 +715,12 @@ export const RegisterIssuer = ({ onRegister, onLogin, defaultTab = "new" }: Regi
 
                         <Button
                           onClick={handleRegister}
-                          disabled={!isConnected || loading}
+                          disabled={isRegistering || !isConnected || loading}
                           className="w-full"
                           size="lg"
                         >
                           <Key className="w-4 h-4 mr-2" />
-                          {loading ? "Registering..." : "Register as Issuer"}
+                          {isRegistering || loading ? "Registering..." : "Register as Issuer"}
                         </Button>
                       </div>
 

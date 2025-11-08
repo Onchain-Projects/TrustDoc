@@ -35,12 +35,19 @@ export const TRUSTDOC_ABI = [
     "stateMutability": "view",
     "type": "function"
   },
+  {
+    "inputs": [],
+    "name": "owner",
+    "outputs": [{"internalType": "address", "name": "", "type": "address"}],
+    "stateMutability": "view",
+    "type": "function"
+  },
   
   // Issuer Management
   {
     "inputs": [
       {"internalType": "string", "name": "issuerId", "type": "string"},
-      {"internalType": "address", "name": "pubKey", "type": "address"},
+      {"internalType": "uint256", "name": "pubKey", "type": "uint256"},
       {"internalType": "string", "name": "name", "type": "string"}
     ],
     "name": "registerIssuer",
@@ -52,9 +59,17 @@ export const TRUSTDOC_ABI = [
     "inputs": [{"internalType": "string", "name": "issuerId", "type": "string"}],
     "name": "getIssuerDetails",
     "outputs": [
-      {"internalType": "string", "name": "", "type": "string"},
-      {"internalType": "string", "name": "", "type": "string"},
-      {"internalType": "address[]", "name": "", "type": "address[]"}
+      {"internalType": "string", "name": "id", "type": "string"},
+      {"internalType": "string", "name": "name", "type": "string"},
+      {
+        "components": [
+          {"internalType": "uint256", "name": "timestamp", "type": "uint256"},
+          {"internalType": "uint256", "name": "pub_key", "type": "uint256"}
+        ],
+        "internalType": "struct TrustDoc.IssuerPubKey[]",
+        "name": "pubKeys",
+        "type": "tuple[]"
+      }
     ],
     "stateMutability": "view",
     "type": "function"
@@ -184,8 +199,53 @@ export const blockchainUtils = {
 
   // Register issuer on blockchain
   async registerIssuer(issuerId: string, publicKey: string, name: string): Promise<string> {
-    const { contract } = getContractInstance(true)
-    const tx = await contract.registerIssuer(issuerId, publicKey, name)
+    const { contract, provider } = getContractInstance(true)
+    // The contract expects uint256 type for pubKey
+    // Ensure address is properly formatted
+    const formattedAddress = publicKey.startsWith('0x') ? publicKey : `0x${publicKey}`
+    if (!ethers.isAddress(formattedAddress)) {
+      throw new Error(`Invalid address format: ${formattedAddress}`)
+    }
+    // Convert address to uint256 (BigInt) as required by the contract
+    const pubKeyAsUint256 = BigInt(formattedAddress)
+    
+    // Get current gas price from network and set appropriate prices for Polygon Amoy
+    const feeData = await provider.getFeeData()
+    
+    // For Polygon Amoy, use LEGACY gasPrice (more reliable than EIP-1559)
+    const gasOptions: any = {}
+    
+    if (feeData.gasPrice) {
+      // Use network's gasPrice with 100% buffer (double) for Polygon Amoy to ensure it goes through
+      const networkGasPrice = feeData.gasPrice
+      const bufferedGasPrice = networkGasPrice * 200n / 100n // Double the gas price (100% buffer)
+      
+      // Ensure minimum of 60 gwei for Polygon Amoy
+      const minGasPrice = ethers.parseUnits('60', 'gwei')
+      gasOptions.gasPrice = bufferedGasPrice > minGasPrice ? bufferedGasPrice : minGasPrice
+    } else {
+      // Fallback: use very high gas price if network data unavailable
+      gasOptions.gasPrice = ethers.parseUnits('100', 'gwei') // 100 gwei fallback
+    }
+    
+    // Estimate gas limit
+    try {
+      const estimatedGas = await contract.registerIssuer.estimateGas(issuerId, pubKeyAsUint256, name)
+      gasOptions.gasLimit = estimatedGas * 120n / 100n // Add 20% buffer
+    } catch (gasError) {
+      console.warn('Gas estimation failed, using default:', gasError)
+      gasOptions.gasLimit = 200000n // Default gas limit
+    }
+    
+    // Get the correct nonce (pending count) to allow transaction even with pending transactions
+    const { wallet } = getContractInstance(true)
+    const walletAddress = await wallet.getAddress()
+    const pendingNonce = await provider.getTransactionCount(walletAddress, 'pending')
+    gasOptions.nonce = pendingNonce
+    
+    console.log('Using nonce:', pendingNonce)
+    
+    const tx = await contract.registerIssuer(issuerId, pubKeyAsUint256, name, gasOptions)
     const receipt = await tx.wait()
     return receipt.transactionHash
   },

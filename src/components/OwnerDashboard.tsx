@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Shield, Users, FileX, AlertTriangle, Settings, 
   Plus, Eye, Download, Trash2, LogOut, Wallet, CheckCircle
@@ -11,6 +11,9 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { AddWorker } from './AddWorker';
 import { InvalidateDoc } from './InvalidateDoc';
 import { InvalidateRoot } from './InvalidateRoot';
+import { useBlockchain } from '@/hooks/useBlockchain';
+import { ethers } from 'ethers';
+import { CONTRACT_CONFIG } from '@/lib/blockchain/contract';
 
 interface OwnerDashboardProps {
   wallet?: string;
@@ -19,66 +22,111 @@ interface OwnerDashboardProps {
   onLogout?: () => void;
 }
 
-export const OwnerDashboard = ({ wallet, network, issuerId, onLogout }: OwnerDashboardProps) => {
+export const OwnerDashboard = ({ wallet: propWallet, network: propNetwork, issuerId, onLogout }: OwnerDashboardProps) => {
   const [activeTab, setActiveTab] = useState('overview');
+  const [localWallet, setLocalWallet] = useState<string | null>(propWallet || null);
+  const [localNetwork, setLocalNetwork] = useState<string | null>(propNetwork || null);
   const [isConnecting, setIsConnecting] = useState(false);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+  
+  // Use blockchain hook for wallet management
+  const { 
+    isConnected, 
+    account, 
+    isCorrectNetwork, 
+    connectWallet: hookConnectWallet, 
+    switchNetwork: hookSwitchNetwork,
+    loading: blockchainLoading 
+  } = useBlockchain();
+
+  // Sync local state with blockchain hook state
+  useEffect(() => {
+    if (isConnected && account) {
+      setLocalWallet(account);
+      setLocalNetwork('amoy');
+      setConnectionError(null);
+    }
+  }, [isConnected, account]);
 
   const connectWallet = async () => {
     if (!window.ethereum) {
+      setConnectionError('Please install MetaMask to connect your wallet');
       alert('Please install MetaMask to connect your wallet');
       return;
     }
 
     setIsConnecting(true);
+    setConnectionError(null);
+    
     try {
+      // First, connect wallet using the hook
+      await hookConnectWallet();
+      
+      // Get the connected account
       const accounts = await window.ethereum.request({ 
-        method: 'eth_requestAccounts' 
+        method: 'eth_accounts' 
       });
       
-      if (accounts.length > 0) {
-        let connectedAddress = accounts[0];
+      if (accounts.length === 0) {
+        // Request accounts if not already connected
+        const requestedAccounts = await window.ethereum.request({ 
+          method: 'eth_requestAccounts' 
+        });
         
-        // Check if connected wallet is the contract owner
-        const ownerAddress = '0x85D7c8df42f4253D8d9e0596cCA500e60f13dce8';
-        
-        if (connectedAddress.toLowerCase() !== ownerAddress.toLowerCase()) {
-          alert(`❌ Access Denied!\n\nOnly the contract owner can connect to this dashboard.\n\nExpected Owner: ${ownerAddress}\nConnected Wallet: ${connectedAddress}\n\nPlease select the correct owner account in MetaMask.`);
-
-          // Prompt MetaMask to allow selecting a different account
-          try {
-            await window.ethereum.request({
-              method: 'wallet_requestPermissions',
-              params: [{ eth_accounts: {} }],
-            });
-          } catch (permErr) {
-            // Ignore; user may cancel the permissions prompt
-          }
-
-          // Re-request accounts after permission change to allow switching
-          try {
-            const reAccounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
-            if (reAccounts && reAccounts.length > 0) {
-              connectedAddress = reAccounts[0];
-            }
-          } catch (reErr) {
-            // If user cancels, stop here
-            throw reErr;
-          }
-
-          // Final owner check after re-selection
-          if (connectedAddress.toLowerCase() !== ownerAddress.toLowerCase()) {
-            alert('Still not the owner account. Please switch to the owner wallet in MetaMask and try again.');
-            return;
-          }
+        if (requestedAccounts.length === 0) {
+          throw new Error('No accounts found. Please unlock MetaMask.');
         }
-        
-        // Switch to Polygon Amoy if not already connected
+      }
+      
+      // Get the current account
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+      const connectedAddress = await signer.getAddress();
+      
+      // Check if connected wallet is the contract owner
+      const expectedOwnerAddress = '0x85D7c8df42f4253D8d9e0596cCA500e60f13dce8';
+      
+      if (connectedAddress.toLowerCase() !== expectedOwnerAddress.toLowerCase()) {
+        const errorMsg = `❌ Access Denied!\n\nOnly the contract owner can connect to this dashboard.\n\nExpected Owner: ${expectedOwnerAddress}\nConnected Wallet: ${connectedAddress}\n\nPlease select the correct owner account in MetaMask.`;
+        setConnectionError(errorMsg);
+        alert(errorMsg);
+
+        // Prompt MetaMask to allow selecting a different account
         try {
           await window.ethereum.request({
-            method: 'wallet_switchEthereumChain',
-            params: [{ chainId: '0x13882' }], // Polygon Amoy
+            method: 'wallet_requestPermissions',
+            params: [{ eth_accounts: {} }],
           });
-        } catch (switchError) {
+          
+          // Re-request accounts after permission change
+          const reAccounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+          if (reAccounts && reAccounts.length > 0) {
+            const newAddress = reAccounts[0];
+            if (newAddress.toLowerCase() !== expectedOwnerAddress.toLowerCase()) {
+              setConnectionError('Still not the owner account. Please switch to the owner wallet in MetaMask and try again.');
+              return;
+            }
+            // If it matches now, update state
+            setLocalWallet(newAddress);
+          }
+        } catch (permErr: any) {
+          // User may have cancelled
+          if (permErr.code !== 4001) { // 4001 = user rejected
+            console.error('Permission error:', permErr);
+          }
+          return;
+        }
+      } else {
+        // Wallet is correct, update state
+        setLocalWallet(connectedAddress);
+        setConnectionError(null);
+      }
+      
+      // Switch to Polygon Amoy if not already connected
+      if (!isCorrectNetwork) {
+        try {
+          await hookSwitchNetwork();
+        } catch (switchError: any) {
           // If chain doesn't exist, add it
           if (switchError.code === 4902) {
             await window.ethereum.request({
@@ -95,19 +143,39 @@ export const OwnerDashboard = ({ wallet, network, issuerId, onLogout }: OwnerDas
                 blockExplorerUrls: ['https://amoy.polygonscan.com'],
               }],
             });
+            // Try switching again after adding
+            await hookSwitchNetwork();
+          } else {
+            console.error('Network switch error:', switchError);
+            setConnectionError('Failed to switch to Polygon Amoy network. Please switch manually in MetaMask.');
           }
         }
-        
-        // Reload the page to update wallet state
-        window.location.reload();
       }
-    } catch (error) {
+      
+      // Update network state
+      setLocalNetwork('amoy');
+      
+      console.log('✅ Wallet connected successfully:', connectedAddress);
+      
+    } catch (error: any) {
       console.error('Error connecting wallet:', error);
-      alert('Failed to connect wallet. Please try again.');
+      const errorMessage = error.message || 'Failed to connect wallet. Please try again.';
+      setConnectionError(errorMessage);
+      
+      // Show user-friendly error
+      if (error.code === 4001) {
+        alert('Connection cancelled. Please approve the connection in MetaMask.');
+      } else {
+        alert(`Failed to connect wallet: ${errorMessage}`);
+      }
     } finally {
       setIsConnecting(false);
     }
   };
+
+  // Use local wallet state if available, otherwise use prop
+  const wallet = localWallet || propWallet;
+  const network = localNetwork || propNetwork;
 
   return (
     <main className="flex-grow">
@@ -137,8 +205,12 @@ export const OwnerDashboard = ({ wallet, network, issuerId, onLogout }: OwnerDas
             </div>
             <div className="mt-4 flex md:mt-0 md:ml-4 space-x-3">
               {!wallet ? (
-                <Button onClick={connectWallet} disabled={isConnecting} className="bg-blue-600 hover:bg-blue-700">
-                  {isConnecting ? (
+                <Button 
+                  onClick={connectWallet} 
+                  disabled={isConnecting || blockchainLoading} 
+                  className="bg-blue-600 hover:bg-blue-700"
+                >
+                  {isConnecting || blockchainLoading ? (
                     <>
                       <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
                       Connecting...
@@ -154,7 +226,7 @@ export const OwnerDashboard = ({ wallet, network, issuerId, onLogout }: OwnerDas
                 <div className="flex items-center space-x-2">
                   <Badge variant="outline" className="bg-green-100 text-green-800">
                     <CheckCircle className="w-3 h-3 mr-1" />
-                    Connected
+                    Connected: {wallet.slice(0, 6)}...{wallet.slice(-4)}
                   </Badge>
                 </div>
               )}
@@ -286,6 +358,14 @@ export const OwnerDashboard = ({ wallet, network, issuerId, onLogout }: OwnerDas
                       <code className="text-xs bg-gray-100 px-2 py-1 rounded">
                         0x85D7c8df42f4253D8d9e0596cCA500e60f13dce8
                       </code>
+                      {connectionError && (
+                        <>
+                          <br />
+                          <br />
+                          <strong className="text-red-600">Error:</strong>
+                          <p className="text-sm text-red-700 mt-1">{connectionError}</p>
+                        </>
+                      )}
                     </AlertDescription>
                   </Alert>
                 )}

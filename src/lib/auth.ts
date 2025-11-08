@@ -101,18 +101,155 @@ export const authService = {
   async signIn(data: SignInData) {
     console.log('Attempting to sign in with:', { email: data.email })
     
-    const { data: authData, error } = await supabase.auth.signInWithPassword({
-      email: data.email,
-      password: data.password,
-    })
+    // CRITICAL FIX: Try Supabase Auth first, then fallback to custom authentication
+    try {
+      // First, try Supabase Auth (for users registered through proper flow)
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email: data.email,
+        password: data.password,
+      })
 
-    if (error) {
-      console.error('Sign in error:', error)
-      throw new Error(error.message || 'Sign in failed')
+      if (!authError && authData) {
+        console.log('Sign in successful via Supabase Auth:', authData)
+        return authData
+      }
+
+      // If Supabase Auth fails, check if user exists in custom tables
+      console.log('Supabase Auth failed, checking custom tables...', authError?.message)
+      
+    } catch (authError: any) {
+      console.log('Supabase Auth error, checking custom tables...', authError?.message)
     }
+
+    // FALLBACK: Custom authentication from issuers/owners table
+    console.log('Attempting custom authentication from database...')
     
-    console.log('Sign in successful:', authData)
-    return authData
+    // Check issuers table first
+    const { data: issuerData, error: issuerError } = await supabase
+      .from('issuers')
+      .select('*')
+      .eq('email', data.email)
+      .single()
+
+    if (!issuerError && issuerData) {
+      // Found in issuers table - verify password
+      if (issuerData.password === data.password) {
+        console.log('✅ Custom authentication successful (issuer)')
+        
+        // Create a mock auth session for compatibility
+        // Note: This is a workaround - ideally, we should create the user in Supabase Auth
+        const mockUser = {
+          id: issuerData.id || issuerData.issuerId,
+          email: issuerData.email,
+          user_metadata: {
+            name: issuerData.name,
+            issuer_id: issuerData.issuerId,
+            user_type: 'issuer'
+          }
+        }
+
+        // Try to create the user in Supabase Auth if it doesn't exist
+        // This ensures future logins work with Supabase Auth
+        try {
+          const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+            email: data.email,
+            password: data.password,
+            options: {
+              data: {
+                name: issuerData.name,
+                user_type: 'issuer',
+                issuer_id: issuerData.issuerId,
+              }
+            }
+          })
+
+          if (!signUpError && signUpData.user) {
+            console.log('✅ Created user in Supabase Auth for future logins')
+            // Now sign in with the newly created account
+            const { data: authData, error: signInError } = await supabase.auth.signInWithPassword({
+              email: data.email,
+              password: data.password,
+            })
+
+            if (!signInError && authData) {
+              return authData
+            }
+          }
+        } catch (createError) {
+          console.warn('Could not create user in Supabase Auth, using custom auth:', createError)
+        }
+
+        // Return mock user data (compatible with existing code)
+        return {
+          user: mockUser as any,
+          session: null
+        }
+      } else {
+        throw new Error('Invalid password')
+      }
+    }
+
+    // Check owners table
+    const { data: ownerData, error: ownerError } = await supabase
+      .from('owners')
+      .select('*')
+      .eq('email', data.email)
+      .single()
+
+    if (!ownerError && ownerData) {
+      // Found in owners table - verify password
+      if (ownerData.password === data.password) {
+        console.log('✅ Custom authentication successful (owner)')
+        
+        // Create mock auth session
+        const mockUser = {
+          id: ownerData.id,
+          email: ownerData.email,
+          user_metadata: {
+            name: ownerData.name,
+            user_type: 'owner'
+          }
+        }
+
+        // Try to create the user in Supabase Auth if it doesn't exist
+        try {
+          const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+            email: data.email,
+            password: data.password,
+            options: {
+              data: {
+                name: ownerData.name,
+                user_type: 'owner',
+              }
+            }
+          })
+
+          if (!signUpError && signUpData.user) {
+            console.log('✅ Created user in Supabase Auth for future logins')
+            const { data: authData, error: signInError } = await supabase.auth.signInWithPassword({
+              email: data.email,
+              password: data.password,
+            })
+
+            if (!signInError && authData) {
+              return authData
+            }
+          }
+        } catch (createError) {
+          console.warn('Could not create user in Supabase Auth, using custom auth:', createError)
+        }
+
+        return {
+          user: mockUser as any,
+          session: null
+        }
+      } else {
+        throw new Error('Invalid password')
+      }
+    }
+
+    // User not found in either table
+    throw new Error('Invalid login credentials')
   },
 
   // Sign out user
