@@ -1,6 +1,7 @@
 import { ethers } from 'ethers'
 import { MerkleTree } from 'merkletreejs'
 import { supabase } from './supabase'
+import { extractProofBlock, canonicalProofString } from './pdf-proof'
 import { CONTRACT_CONFIG, TRUSTDOC_ABI } from './blockchain/contract'
 import { sha256 } from 'js-sha256'
 
@@ -53,73 +54,122 @@ export async function verifyDocument(file: File): Promise<VerificationResult> {
   console.log('🔍 Starting document verification...')
   
   try {
-    // STEP 1: Hash file with keccak256 (matches Real TrustDoc line 131)
+    // STEP 1: Load PDF and extract embedded proof
     const fileBuffer = await file.arrayBuffer()
-    const docHash = hashFileWithKeccak256(fileBuffer)
-    const normalizedDocHash = normalizeHash(docHash)
-    console.log('📄 Document hash (keccak256):', normalizedDocHash)
+    const pdfBytes = new Uint8Array(fileBuffer)
+    const { originalBytes, proof } = extractProofBlock(pdfBytes)
+    const proofJson = proof.proof_json
 
-    // STEP 2: Fetch all proofs from database
-    const { data: dbProofs, error: proofsError } = await supabase
-      .from('proofs')
-      .select('*')
-    
-    if (proofsError) {
-      console.error('Database error:', proofsError)
-      throw new Error('Failed to fetch proofs from database')
+    if (!proofJson || !Array.isArray(proofJson.proofs) || proofJson.proofs.length === 0) {
+      throw new Error('Embedded proof is missing verification data')
     }
 
-    if (!dbProofs || dbProofs.length === 0) {
+    if (!proof.proof_signature) {
+      throw new Error('Embedded proof signature missing')
+    }
+
+    const canonicalProof = canonicalProofString({
+      id: proof.id,
+      issuer_id: proof.issuer_id,
+      batch: proof.batch,
+      merkle_root: proof.merkle_root,
+      signature: proof.signature,
+      proof_json: proof.proof_json,
+      file_paths: proof.file_paths,
+      created_at: proof.created_at,
+      expiry_date: proof.expiry_date ?? null,
+      description: proof.description ?? null
+    })
+    const proofDigest = ethers.keccak256(ethers.toUtf8Bytes(canonicalProof))
+    console.log('📄 Proof digest keccak256:', proofDigest)
+
+    const { data: issuerSigDoc, error: issuerSigError } = await supabase
+      .from('issuers')
+      .select('publicKey')
+      .eq('issuerId', proof.issuer_id)
+      .single()
+
+    if (issuerSigError || !issuerSigDoc?.publicKey) {
+      throw new Error('Issuer public key not found for proof signature verification')
+    }
+
+    let proofSignatureValid = false
+    try {
+      const recoveredProofSigner = ethers.recoverAddress(
+        ethers.hashMessage(ethers.getBytes(proofDigest)),
+        proof.proof_signature
+      )
+      const issuerAddressFromPubKey = ethers.computeAddress(issuerSigDoc.publicKey)
+      proofSignatureValid =
+        recoveredProofSigner.toLowerCase() === issuerAddressFromPubKey.toLowerCase()
+
+      console.log('🔐 Proof signature verification:', {
+        recoveredProofSigner,
+        issuerAddressFromPubKey,
+        proofSignatureValid
+      })
+    } catch (sigErr) {
+      console.error('❌ Proof signature verification error:', sigErr)
+    }
+
+    if (!proofSignatureValid) {
       return {
         valid: false,
-        reason: 'No proofs found in database'
-      }
-    }
-
-    console.log(`🔍 Searching through ${dbProofs.length} proofs...`)
-
-    // STEP 3: Search for document in proof leaves (matches Real TrustDoc lines 162-185)
-    let found = false
-    let proofData: any = null
-    let matchedProof: any = null
-    let issuerId: string | null = null
-    let batch: string | null = null
-
-    for (const p of dbProofs) {
-      const meta = p.proof_json
-      if (meta && Array.isArray(meta.proofs)) {
-        for (const proofObj of meta.proofs) {
-          if (Array.isArray(proofObj.leaves)) {
-            // Normalize all leaves
-            const normalizedLeaves = proofObj.leaves.map((l: string) => normalizeHash(l))
-            const idx = normalizedLeaves.findIndex((leaf: string) => leaf === normalizedDocHash)
-            
-            if (idx !== -1) {
-              found = true
-              proofData = proofObj
-              matchedProof = p
-              issuerId = p.issuer_id
-              batch = p.batch
-              console.log('✅ Found matching proof!')
-              console.log('- Issuer ID:', issuerId)
-              console.log('- Batch:', batch)
-              console.log('- Merkle Root:', proofData.merkleRoot)
-              break
-            }
-          }
-        }
-        if (found) break
-      }
-    }
-
-    if (!found) {
-      console.log('❌ Document hash not found in any proof')
-      return {
-        valid: false,
-        reason: 'Document not found in any batch',
+        reason: 'Embedded proof signature invalid',
         fileName: file.name
       }
     }
+
+    const proofData = proofJson.proofs[0]
+    if (!Array.isArray(proofData.leaves) || proofData.leaves.length === 0) {
+      throw new Error('Embedded proof does not contain any document hashes')
+    }
+
+    // STEP 2: Hash file with keccak256 (matches Real TrustDoc line 131)
+    console.log('🔍 Extracted original bytes length:', originalBytes.length)
+
+    let workingBytes = originalBytes
+    const computeHash = (bytes: Uint8Array) => {
+      const hex = '0x' + Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('')
+      return normalizeHash(ethers.keccak256(hex))
+    }
+
+    let normalizedDocHash = computeHash(workingBytes)
+    console.log('📄 Document hash (keccak256):', normalizedDocHash)
+
+    const normalizedLeaves = proofData.leaves.map((l: string) => normalizeHash(l))
+    console.log('📄 Stored leaves (normalized):', normalizedLeaves)
+    let matchingIndex = normalizedLeaves.indexOf(normalizedDocHash)
+
+    if (matchingIndex === -1 && workingBytes.length > 0 && workingBytes[workingBytes.length - 1] === 0x0a) {
+      console.log('📄 Attempting to trim trailing newline for hash comparison...')
+      const trimmed = workingBytes.slice(0, workingBytes.length - 1)
+      const trimmedHash = computeHash(trimmed)
+      console.log('📄 Trimmed document hash (keccak256):', trimmedHash)
+      const trimmedIndex = normalizedLeaves.indexOf(trimmedHash)
+      if (trimmedIndex !== -1) {
+        console.log('📄 Trimmed hash matched stored leaf; using trimmed bytes for verification.')
+        workingBytes = trimmed
+        normalizedDocHash = trimmedHash
+        matchingIndex = trimmedIndex
+      }
+    }
+
+    if (matchingIndex === -1) {
+      console.log('❌ Document hash not present in embedded proof leaves')
+      return {
+        valid: false,
+        reason: 'Document hash not present in embedded proof',
+        fileName: file.name
+      }
+    }
+
+    const issuerId = proof.issuer_id
+    const batch = proof.batch
+    console.log('✅ Found matching proof in embedded payload')
+    console.log('- Issuer ID:', issuerId)
+    console.log('- Batch:', batch)
+    console.log('- Merkle Root:', proofData.merkleRoot || proof.merkle_root)
 
     // STEP 4: Build Merkle tree from leaves (matches Real TrustDoc lines 223-227)
     const leavesBuf = proofData.leaves.map((x: string) => 
@@ -135,10 +185,7 @@ export async function verifyDocument(file: File): Promise<VerificationResult> {
     console.log('🌳 Merkle root computed:', computedRoot)
 
     // STEP 5: Verify Merkle proof (matches Real TrustDoc lines 230-261)
-    const leafIndex = proofData.leaves
-      .map((l: string) => normalizeHash(l))
-      .indexOf(normalizedDocHash)
-    const merkleProof = Array.isArray(proofData.proofs) ? proofData.proofs[leafIndex] : []
+    const merkleProof = Array.isArray(proofData.proofs) ? proofData.proofs[matchingIndex] : []
     console.log('📊 Merkle proof for document:', merkleProof)
 
     const rootBuffer = Buffer.from(computedRoot.replace(/^0x/, ''), 'hex')
@@ -171,7 +218,7 @@ export async function verifyDocument(file: File): Promise<VerificationResult> {
         provider
       )
       
-      const rootHex = normalizeHash(proofData.merkleRoot)
+      const rootHex = normalizeHash(proof.merkle_root || proofData.merkleRoot)
       const exists = await contract.getRootTimestamp(rootHex)
       onChain = exists && exists.toString() !== '0'
       console.log('⛓️ On-chain verification:', onChain ? 'SUCCESS' : 'FAILED')
@@ -199,7 +246,7 @@ export async function verifyDocument(file: File): Promise<VerificationResult> {
     let signatureReason = ''
     
     try {
-      if (!proofData.signature) {
+      if (!(proof.signature || proofData.signature)) {
         signatureReason = 'Signature missing in proof'
       } else {
       // Fetch issuer's public key (camelCase columns in Supabase)
@@ -213,13 +260,13 @@ export async function verifyDocument(file: File): Promise<VerificationResult> {
           signatureReason = 'Issuer public key not found'
         } else {
           // Verify signature using ethers
-          const merkleRootBytes = ethers.getBytes(proofData.merkleRoot)
+          const merkleRootBytes = ethers.getBytes(proof.merkle_root || proofData.merkleRoot)
           const msgHash = ethers.hashMessage(merkleRootBytes)
-          const recovered = ethers.recoverAddress(msgHash, proofData.signature)
+          const recovered = ethers.recoverAddress(msgHash, proof.signature || proofData.signature)
           
           console.log('🔐 Signature verification:')
           console.log('- Merkle root:', proofData.merkleRoot)
-          console.log('- Signature:', proofData.signature)
+          console.log('- Signature:', proof.signature || proofData.signature)
           console.log('- Recovered address:', recovered)
           
           // Compute issuer address from public key
@@ -274,8 +321,8 @@ export async function verifyDocument(file: File): Promise<VerificationResult> {
       }
 
       // Get transaction details from proof_json
-      if (matchedProof.proof_json && matchedProof.proof_json.explorerUrl) {
-        explorerUrl = matchedProof.proof_json.explorerUrl
+      if (proofJson && proofJson.explorerUrl) {
+        explorerUrl = proofJson.explorerUrl
         const txHashMatch = explorerUrl.match(/\/tx\/(0x[a-fA-F0-9]+)/)
         if (txHashMatch) {
           transactionHash = txHashMatch[1]
@@ -283,8 +330,8 @@ export async function verifyDocument(file: File): Promise<VerificationResult> {
       }
 
       // Get issue date
-      if (matchedProof.created_at) {
-        issueDate = new Date(matchedProof.created_at).toLocaleString()
+      if (proof.created_at) {
+        issueDate = new Date(proof.created_at).toLocaleString()
       }
     } catch (err) {
       console.error('Error getting issuer details:', err)
@@ -298,9 +345,9 @@ export async function verifyDocument(file: File): Promise<VerificationResult> {
       issuerId: issuerId || undefined,
       issuerName,
       batch: batch || undefined,
-      merkleRoot: proofData.merkleRoot,
+      merkleRoot: proof.merkle_root || proofData.merkleRoot,
       transactionHash: transactionHash || undefined,
-      explorerUrl: explorerUrl || `https://amoy.polygonscan.com/tx/${transactionHash}`,
+      explorerUrl: explorerUrl || (transactionHash ? `https://amoy.polygonscan.com/tx/${transactionHash}` : undefined),
       fileName: file.name,
       issueDate: issueDate || undefined,
       onChain: true,

@@ -1,350 +1,101 @@
-import { useState, useEffect } from "react";
-import { Search, FileText, AlertTriangle, CheckCircle, Plus, Eye, MoreHorizontal } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Badge } from "@/components/ui/badge";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import { Header } from "@/components/layout/Header";
+import { Footer } from "@/components/layout/Footer";
+import { IssuerDashboard } from "@/components/IssuerDashboard";
 import { useAuthContext } from "@/contexts/AuthContext";
-import { useDocuments } from "@/hooks/useDocuments";
+import { ToastNotifications, useToasts } from "@/components/ui/toast-notifications";
+import { OwnerDashboard } from "@/components/OwnerDashboard";
 
-interface Document {
-  id: string;
-  name: string;
-  status: 'valid' | 'invalid' | 'expired';
-  issuedDate: string;
-  hash: string;
-}
+const DashboardPage = () => {
+  const navigate = useNavigate();
+  const { user, userType, loading, signOut } = useAuthContext();
+  const { toasts, removeToast, showInfo } = useToasts();
 
-interface DashboardPageProps {
-  issuerName?: string;
-  issuerId?: string;
-  publicKey?: string;
-  documents?: Document[];
-  onNavigate?: (page: string) => void;
-  onViewDocument?: (documentId: string) => void;
-  onUpload?: () => void;
-}
-
-export const DashboardPage = ({ 
-  issuerName = "",
-  issuerId = "",
-  publicKey = "Key not available",
-  documents: propDocuments = [],
-  onNavigate,
-  onViewDocument
-}: DashboardPageProps) => {
-  const { user, profile, userType } = useAuthContext();
-  
-  // Check if this is an issuer profile
-  const isIssuer = userType === 'issuer' && profile && 'issuer_id' in profile;
-  const issuerProfile = isIssuer ? profile as any : null;
-  
-  const { proofs, loading: documentsLoading, searchProofs, loadProofs } = useDocuments(
-    issuerProfile?.issuer_id
-  );
-  const [searchTerm, setSearchTerm] = useState("");
-  const [activeTab, setActiveTab] = useState("all");
-
-  // Debug logging
-  console.log('Dashboard Debug:', {
-    profile,
-    issuerId: issuerProfile?.issuer_id,
-    proofs,
-    documentsLoading
-  });
-
-  // Convert proofs to document format for display
-  const documents = proofs.map(proof => ({
-    id: proof.id,
-    name: proof.batch,
-    status: proof.expiry_date && new Date(proof.expiry_date) < new Date() ? 'expired' : 'valid' as 'valid' | 'invalid' | 'expired',
-    issuedDate: new Date(proof.created_at).toLocaleString(),
-    hash: proof.merkle_root.substring(0, 12) + '...' + proof.merkle_root.substring(proof.merkle_root.length - 8)
-  }));
-
-  const filteredDocuments = documents.filter(doc => {
-    const matchesSearch = doc.name.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesTab = activeTab === "all" || 
-                     (activeTab === "valid" && doc.status === "valid") ||
-                     (activeTab === "invalid" && (doc.status === "invalid" || doc.status === "expired"));
-    return matchesSearch && matchesTab;
-  });
-
-  // Handle search
-  const handleSearch = (value: string) => {
-    setSearchTerm(value);
-    if (value.trim()) {
-      searchProofs(value);
-    } else {
-      // If search is cleared, reload all proofs
-      loadProofs();
-    }
-  };
-
-  // Refresh documents (can be called from parent components)
-  const refreshDocuments = () => {
-    loadProofs();
-  };
-
-  // Refresh documents when component mounts or issuer_id changes
   useEffect(() => {
-    if (issuerProfile?.issuer_id) {
-      loadProofs();
+    if (!loading && !user) {
+      navigate("/");
     }
-  }, [issuerProfile?.issuer_id, loadProofs]);
+  }, [loading, user, navigate]);
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case "valid":
-        return <Badge variant="default" className="bg-success text-success-foreground">Valid</Badge>;
-      case "invalid":
-        return <Badge variant="destructive">Invalidated</Badge>;
-      case "expired":
-        return <Badge variant="secondary">Expired</Badge>;
+  const handleNavigate = (page: string) => {
+    switch (page) {
+      case "home":
+        navigate("/");
+        break;
+      case "verify":
+        navigate("/verify");
+        break;
+      case "dashboard":
+        // already here
+        break;
+      case "issue":
+        navigate("/issue");
+        break;
+      case "profile":
+        navigate("/profile");
+        break;
+      case "login":
+        navigate("/");
+        showInfo("Please sign in", "Use the login form on the home page.");
+        break;
+      case "register":
+        navigate("/");
+        showInfo("Create an account", "Use the registration form on the home page.");
+        break;
       default:
-        return <Badge variant="secondary">{status}</Badge>;
+        navigate("/");
     }
   };
+
+  const handleLogout = async () => {
+    await signOut();
+    navigate("/");
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-muted-foreground">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return null;
+  }
+
+  const isOwner = userType === "owner";
 
   return (
-    <div className="min-h-screen bg-background py-8 page-enter">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8">
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-foreground">Issuer Dashboard</h1>
-            <p className="text-muted-foreground mt-1">
-              Issuer: <span className="font-medium">{profile?.name || issuerName}</span> • ID: <span className="font-medium">{issuerProfile?.issuer_id || issuerId}</span>
-            </p>
-            {/* Approval Status */}
-            {profile && 'is_approved' in profile && (
-              <div className="mt-2 flex gap-2">
-                {profile.is_approved ? (
-                  <Badge variant="default" className="bg-green-500 hover:bg-green-600">
-                    <CheckCircle className="w-3 h-3 mr-1" />
-                    Approved Issuer
-                  </Badge>
-                ) : (
-                  <Badge variant="outline" className="bg-yellow-100 text-yellow-800">
-                    <AlertTriangle className="w-3 h-3 mr-1" />
-                    Pending Approval
-                  </Badge>
-                )}
-                {/* Worker Status */}
-                {profile.is_approved && 'blockchain_registration_tx' in profile && (
-                  <>
-                    {profile.blockchain_registration_tx === 'blockchain_integration_failed' ? (
-                      <Badge variant="destructive">
-                        <AlertTriangle className="w-3 h-3 mr-1" />
-                        Blockchain Failed
-                      </Badge>
-                    ) : profile.blockchain_registration_tx === 'pending_blockchain_integration' ? (
-                      <Badge variant="outline" className="bg-yellow-100 text-yellow-800">
-                        <AlertTriangle className="w-3 h-3 mr-1" />
-                        Worker Pending
-                      </Badge>
-                    ) : profile.blockchain_registration_tx && 
-                         profile.blockchain_registration_tx !== 'pending_blockchain_integration' && 
-                         profile.blockchain_registration_tx !== 'blockchain_integration_failed' ? (
-                      <Badge variant="default" className="bg-blue-500 hover:bg-blue-600">
-                        <CheckCircle className="w-3 h-3 mr-1" />
-                        Blockchain Worker
-                      </Badge>
-                    ) : null}
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-          <Button 
-            onClick={() => onNavigate?.('issue')}
-            className="mt-4 sm:mt-0"
-            disabled={
-              !profile || 
-              !('is_approved' in profile) || 
-              !profile.is_approved ||
-              (('blockchain_registration_tx' in profile) && 
-               profile.blockchain_registration_tx === 'blockchain_integration_failed')
-            }
-          >
-            <Plus className="w-4 h-4 mr-2" />
-            Issue New Document
-          </Button>
-        </div>
-
-        {/* Issued Documents Section */}
-        <Card>
-          <CardHeader>
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-4 sm:space-y-0">
-              <div>
-                <CardTitle className="flex items-center space-x-2">
-                  <FileText className="w-5 h-5 text-primary" />
-                  <span>Issued Documents</span>
-                </CardTitle>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Manage all documents issued by your account
-                </p>
-              </div>
-              <div className="flex space-x-2">
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Search documents..."
-                    value={searchTerm}
-                    onChange={(e) => handleSearch(e.target.value)}
-                    className="pl-10 w-full sm:w-80"
-                  />
-                </div>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={refreshDocuments}
-                  disabled={documentsLoading}
-                  title="Refresh documents"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                  </svg>
-                </Button>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <Tabs value={activeTab} onValueChange={setActiveTab}>
-              <TabsList className="grid w-full grid-cols-3 mb-6">
-                <TabsTrigger value="all">All Documents</TabsTrigger>
-                <TabsTrigger value="valid">Valid</TabsTrigger>
-                <TabsTrigger value="invalid">Invalid/Expired</TabsTrigger>
-              </TabsList>
-
-              <TabsContent value={activeTab} className="tab-content">
-                {filteredDocuments.length === 0 ? (
-                  <div className="text-center py-12">
-                    <FileText className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-                    <h3 className="text-lg font-medium text-foreground mb-2">
-                      {searchTerm ? "No documents found" : "No documents uploaded yet"}
-                    </h3>
-                    <p className="text-muted-foreground mb-4">
-                      {searchTerm 
-                        ? "Try adjusting your search terms" 
-                        : "Get started by issuing your first document"
-                      }
-                    </p>
-                    {!searchTerm && (
-                      <Button onClick={() => onNavigate?.('issue')}>
-                        <Plus className="w-4 h-4 mr-2" />
-                        Issue New Document
-                      </Button>
-                    )}
-                  </div>
-                ) : (
-                  <div className="rounded-md border">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Document</TableHead>
-                          <TableHead>Status</TableHead>
-                          <TableHead>Issued</TableHead>
-                          <TableHead>Hash</TableHead>
-                          <TableHead className="w-16">Actions</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {filteredDocuments.map((doc, index) => (
-                          <TableRow key={doc.id} className="document-row" style={{ animationDelay: `${index * 0.1}s` }}>
-                            <TableCell>
-                              <div className="flex items-center space-x-2">
-                                <FileText className="w-4 h-4 text-muted-foreground" />
-                                <span className="font-medium">{doc.name}</span>
-                              </div>
-                            </TableCell>
-                            <TableCell>
-                              {getStatusBadge(doc.status)}
-                            </TableCell>
-                            <TableCell className="text-muted-foreground">
-                              {doc.issuedDate}
-                            </TableCell>
-                            <TableCell>
-                              <code className="text-xs bg-muted px-2 py-1 rounded font-mono">
-                                {doc.hash}
-                              </code>
-                            </TableCell>
-                            <TableCell>
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button variant="ghost" size="sm">
-                                    <MoreHorizontal className="w-4 h-4" />
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end">
-                                  <DropdownMenuItem onClick={() => onViewDocument?.(doc.id)}>
-                                    <Eye className="w-4 h-4 mr-2" />
-                                    View Details
-                                  </DropdownMenuItem>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                )}
-              </TabsContent>
-            </Tabs>
-          </CardContent>
-        </Card>
-
-        {/* Issuer Details Section */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center space-x-2">
-              <CheckCircle className="w-5 h-5 text-primary" />
-              <span>Issuer Details</span>
-            </CardTitle>
-            <p className="text-sm text-muted-foreground">
-              Your issuer information and cryptographic keys
-            </p>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="space-y-4">
-                <div>
-                  <label className="text-sm font-medium text-muted-foreground">Issuer Name</label>
-                  <p className="text-foreground font-medium">{profile?.name || issuerName || "Not available"}</p>
-                </div>
-                <div>
-                  <label className="text-sm font-medium text-muted-foreground">Issuer ID</label>
-                  <p className="text-foreground font-medium font-mono">{issuerProfile?.issuer_id || issuerId || "Not available"}</p>
-                </div>
-              </div>
-              <div className="space-y-4">
-                <div>
-                  <label className="text-sm font-medium text-muted-foreground">Public Key</label>
-                  <p className="text-foreground font-mono text-sm break-all bg-muted p-2 rounded">
-                    {issuerProfile?.public_key || publicKey}
-                  </p>
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+    <>
+      <div className="min-h-screen bg-background flex flex-col">
+        <Header
+          currentPage="dashboard"
+          onNavigate={handleNavigate}
+          wallet={null}
+          isLoggedIn
+          onLogout={handleLogout}
+          isOwner={isOwner}
+          isLoadingOwner={false}
+        />
+        <main className="flex-1">
+          {isOwner ? (
+            <OwnerDashboard wallet={null} network={null} issuerId={null} onLogout={handleLogout} />
+          ) : (
+            <IssuerDashboard onLogout={handleLogout} onNavigate={(page) => handleNavigate(page)} />
+          )}
+        </main>
+        <Footer />
       </div>
-    </div>
+
+      <ToastNotifications toasts={toasts} onRemove={removeToast} />
+    </>
   );
 };
+
+export default DashboardPage;
+

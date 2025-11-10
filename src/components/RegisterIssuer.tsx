@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Shield, Key, Wallet, UserPlus, CheckCircle, X, AlertTriangle } from "lucide-react";
+import { Shield, Key, Wallet, UserPlus, CheckCircle, AlertTriangle, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -643,8 +643,18 @@ export const RegisterIssuer = ({ onRegister, onLogin, defaultTab = "new" }: Regi
                 </Tabs>
               </CardHeader>
 
-              <CardContent>
-                <Tabs value={activeTab} onValueChange={setActiveTab}>
+              <CardContent className="relative">
+                {isRegistering && (
+                  <div className="absolute inset-0 z-10 flex flex-col items-center justify-center space-y-3 bg-background/90 backdrop-blur-sm">
+                    <Loader2 className="h-6 w-6 animate-spin text-primary" aria-hidden="true" />
+                    <p className="text-sm text-muted-foreground" aria-live="polite">
+                      Finalizing blockchain registration...
+                    </p>
+                  </div>
+                )}
+
+                <div className={isRegistering ? "pointer-events-none opacity-40" : ""}>
+                  <Tabs value={activeTab} onValueChange={setActiveTab}>
                   {/* New Issuer Registration */}
                   <TabsContent value="new" className="space-y-6 tab-content">
                     <div className="space-y-4">
@@ -857,7 +867,8 @@ export const RegisterIssuer = ({ onRegister, onLogin, defaultTab = "new" }: Regi
                       </div>
                     </div>
                   </TabsContent>
-                </Tabs>
+                  </Tabs>
+                </div>
               </CardContent>
             </Card>
           </div>

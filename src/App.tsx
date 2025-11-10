@@ -6,9 +6,9 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import Index from "./pages/Index";
 import { IssueDocumentPage } from "./pages/IssueDocumentPage";
-import { VerifyDocumentPage } from "./pages/VerifyDocumentPage";
+import { VerifyDoc } from "./components/VerifyDoc";
 import { ProfilePage } from "./pages/ProfilePage";
-import { DashboardPage } from "./pages/DashboardPage";
+import DashboardPage from "./pages/DashboardPage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -23,7 +23,7 @@ const App = () => (
           <Routes>
             <Route path="/" element={<Index />} />
             <Route path="/issue" element={<IssueDocumentPage />} />
-            <Route path="/verify" element={<VerifyDocumentPage />} />
+            <Route path="/verify" element={<VerifyDoc />} />
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/profile" element={<ProfilePage />} />
             <Route path="*" element={<NotFound />} />

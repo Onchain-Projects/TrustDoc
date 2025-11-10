@@ -94,6 +94,17 @@ export interface Proof {
   description?: string
 }
 
+export interface IssuedDocument {
+  id: string
+  issuer_id: string
+  batch_name: string
+  issue_mode: 'single' | 'batch'
+  merkle_root: string
+  document_names: string[]
+  files_count: number
+  issued_at: string
+}
+
 // Auth types
 export interface AuthUser {
   id: string

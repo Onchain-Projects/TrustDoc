@@ -1,4 +1,4 @@
-import { FileCheck, Shield, Link2, UserPlus, ArrowRight, Database, Key, FileX, Upload, Hash, TreePine, CheckCircle, Award, FileText, Users } from "lucide-react";
+import { Shield, Database, Key, FileX, Upload, Layers, CheckCircle, Award, FileText, Users, Fingerprint } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
@@ -18,7 +18,7 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
               <span className="bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-purple-600">TrustDoc</span>
           </h1>
             <p className="mt-4 text-xl text-gray-600 max-w-3xl mx-auto">
-              A platform for decentralized verification of digital documents and transactions using blockchain technology.
+              A trusted platform that lets organizations issue, anchor, and verify digital documents with confidence.
             </p>
             <div className="mt-8 flex justify-center space-x-4">
               <button
@@ -52,7 +52,7 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
               </div>
               <div className="flex-1">
                 <h3 className="text-lg font-semibold text-gray-900 mb-3">Fast On-Chain Verification</h3>
-                <p className="text-gray-600 text-sm">Verify documents instantly using lightweight Merkle-based cryptographic proofs.</p>
+                <p className="text-gray-600 text-sm">Deliver instant, tamper-evident verification without exposing internal technology.</p>
               </div>
             </div>
             <div className="bg-white rounded-lg p-6 shadow-sm border border-gray-200 flex items-start space-x-4 hover:shadow-lg hover:ring-2 hover:ring-violet-500 transition-all duration-200 select-none cursor-default">
@@ -61,7 +61,7 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
                 </div>
               <div className="flex-1">
                 <h3 className="text-lg font-semibold text-gray-900 mb-3">Enterprise-Grade Security</h3>
-                <p className="text-gray-600 text-sm">Cryptographic hashing and Merkle roots ensure tamper-proof document integrity.</p>
+                <p className="text-gray-600 text-sm">Bank-grade cryptography protects every document from alteration or fraud.</p>
                 </div>
                 </div>
             <div className="bg-white rounded-lg p-6 shadow-sm border border-gray-200 flex items-start space-x-4 hover:shadow-lg hover:ring-2 hover:ring-violet-500 transition-all duration-200 select-none cursor-default">
@@ -70,7 +70,7 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
                 </div>
               <div className="flex-1">
                 <h3 className="text-lg font-semibold text-gray-900 mb-3">Scalable Batch Uploads</h3>
-                <p className="text-gray-600 text-sm">Upload and verify thousands of documents efficiently using Merkle tree batching.</p>
+                <p className="text-gray-600 text-sm">Handle high-volume document programs with automated batch processing.</p>
                 </div>
                 </div>
           </div>
@@ -95,17 +95,17 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
               </div>
               <div className="bg-white rounded-xl p-6 shadow-lg border-2 border-purple-200">
                 <div className="h-12 w-12 rounded-full bg-purple-100 flex items-center justify-center text-purple-600 mb-4">
-                  <Hash className="w-6 h-6" />
+                  <Fingerprint className="w-6 h-6" />
                 </div>
-                <h3 className="text-lg font-bold text-gray-900 mb-2">2. Hash</h3>
-                <p className="text-gray-600 text-sm">Documents are cryptographically hashed to create unique digital fingerprints.</p>
+                <h3 className="text-lg font-bold text-gray-900 mb-2">2. Secure Fingerprint</h3>
+                <p className="text-gray-600 text-sm">Each file receives a unique digital fingerprint that proves it came from you.</p>
               </div>
               <div className="bg-white rounded-xl p-6 shadow-lg border-2 border-teal-200">
                 <div className="h-12 w-12 rounded-full bg-teal-100 flex items-center justify-center text-teal-600 mb-4">
-                  <TreePine className="w-6 h-6" />
+                  <Layers className="w-6 h-6" />
                 </div>
-                <h3 className="text-lg font-bold text-gray-900 mb-2">3. Merkle Tree</h3>
-                <p className="text-gray-600 text-sm">Hashes are grouped using Merkle trees for efficient, scalable blockchain anchoring.</p>
+                <h3 className="text-lg font-bold text-gray-900 mb-2">3. Trusted Anchoring</h3>
+                <p className="text-gray-600 text-sm">Fingerprints are anchored on-chain using our optimized infrastructure.</p>
               </div>
               <div className="bg-white rounded-xl p-6 shadow-lg border-2 border-indigo-200">
                 <div className="h-12 w-12 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 mb-4">
@@ -116,15 +116,14 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
               </div>
             </div>
             
-            {/* Merkle Tree Highlight */}
+            {/* Trusted Infrastructure Highlight */}
             <div className="mt-12 bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl p-8 border border-green-100">
               <div className="flex items-center justify-center mb-4">
-                <TreePine className="w-8 h-8 text-green-600 mr-3" />
-                <h3 className="text-xl font-bold text-gray-900">Efficient Merkle Tree Batching</h3>
+                <Shield className="w-8 h-8 text-green-600 mr-3" />
+                <h3 className="text-xl font-bold text-gray-900">Optimized Trust Infrastructure</h3>
               </div>
               <p className="text-gray-700 text-center max-w-3xl mx-auto">
-                Documents are hashed and grouped using a Merkle tree structure, enabling secure, scalable blockchain anchoring. 
-                This approach reduces gas costs and improves throughput while maintaining cryptographic security.
+                Our managed blockchain layer absorbs the complexity so your teams get a seamless experience, predictable costs, and enterprise-grade reliability.
               </p>
             </div>
           </div>
@@ -158,7 +157,7 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
                 <Database className="w-5 h-5 mr-2 text-blue-500" />
                 Batch Processing
               </h3>
-              <p className="text-gray-600">Efficient Merkle tree implementation allows for batched document processing, reducing costs and improving throughput.</p>
+              <p className="text-gray-600">Smart batching and scheduling keep costs low while supporting enterprise-scale issuance.</p>
             </div>
             <div className="bg-white rounded-xl p-8 shadow-sm border border-gray-100">
               <h3 className="text-xl font-bold text-gray-900 mb-4 flex items-center">

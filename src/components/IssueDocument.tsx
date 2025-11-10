@@ -6,11 +6,14 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useAuthContext } from "@/contexts/AuthContext";
-import { supabase, supabaseAdmin } from "@/lib/supabase";
+import { supabase } from "@/lib/supabase";
+import { appendProofBlock, canonicalProofString, type ProofPayload } from "@/lib/pdf-proof";
+import JSZip from "jszip";
 import { getContractInstance } from "@/lib/blockchain/contract";
 import { ethers } from "ethers";
 import { MerkleTree } from "merkletreejs";
 import { sha256 } from "js-sha256";
+import { useNavigate } from "react-router-dom";
 
 interface IssueDocumentProps {
   onUploadComplete?: () => void;
@@ -19,6 +22,7 @@ interface IssueDocumentProps {
 export const IssueDocument = ({ onUploadComplete }: IssueDocumentProps) => {
   // Get authenticated user and profile from Supabase Auth
   const { user, profile, userType } = useAuthContext();
+  const navigate = useNavigate();
   
   // Get issuerId from Supabase Auth profile
   const issuerId = profile?.issuerId || null;
@@ -31,6 +35,31 @@ export const IssueDocument = ({ onUploadComplete }: IssueDocumentProps) => {
   const [uploadMode, setUploadMode] = useState<"single" | "batch">("single");
   const [isDragOver, setIsDragOver] = useState(false);
   const [showAllFiles, setShowAllFiles] = useState(false);
+
+  const debugDecoder = new TextDecoder();
+
+  const sanitizeForFileName = (value: string) =>
+    value
+      .trim()
+      .replace(/\s+/g, "-")
+      .replace(/[^a-zA-Z0-9._-]/g, "-")
+      .replace(/-+/g, "-");
+
+  const downloadBlob = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const generateProofId = () =>
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `${issuerId}-${Date.now()}`;
 
   const handleFileSelect = (files: FileList | null) => {
     if (files) {
@@ -151,16 +180,16 @@ export const IssueDocument = ({ onUploadComplete }: IssueDocumentProps) => {
       // 1. Simulate backend processing (generate Merkle root without Buffer issues)
       setUploadStatus("Processing files...");
       
-      // Generate file hashes for Merkle tree (without using MerkleTree library)
-      const fileHashes = await Promise.all(
-        selectedFiles.map(async (file) => {
-          const arrayBuffer = await file.arrayBuffer();
-          const data = new Uint8Array(arrayBuffer);
-          // Use ethers.keccak256 directly on hex string
-          const hexString = '0x' + Array.from(data).map(b => b.toString(16).padStart(2, '0')).join('');
-          return ethers.keccak256(hexString);
-        })
+      // Read files into memory once
+      const fileByteArrays = await Promise.all(
+        selectedFiles.map(async (file) => new Uint8Array(await file.arrayBuffer()))
       );
+
+      // Generate file hashes for Merkle tree from original bytes
+      const fileHashes = fileByteArrays.map((data) => {
+        const hexString = '0x' + Array.from(data).map(b => b.toString(16).padStart(2, '0')).join('');
+        return ethers.keccak256(hexString);
+      });
 
       console.log('🔍 File hashes generated:', fileHashes);
 
@@ -417,6 +446,7 @@ export const IssueDocument = ({ onUploadComplete }: IssueDocumentProps) => {
 
       // Create proof JSON matching MongoDB schema exactly
       const explorerUrl = `https://amoy.polygonscan.com/tx/${tx.hash}`;
+      const issuedAt = new Date().toISOString();
       const proofJson = {
         proofs: [{
           merkleRoot: merkleRoot,
@@ -424,48 +454,160 @@ export const IssueDocument = ({ onUploadComplete }: IssueDocumentProps) => {
           files: selectedFiles.map(f => f.name),
           proofs: proofs, // Array of arrays - Merkle proofs for each leaf
           signature: signature,
-          timestamp: new Date().toISOString()
+          timestamp: issuedAt,
+          fileLengths: fileByteArrays.map(bytes => bytes.length)
         }],
         network: 'amoy',
         explorerUrl: explorerUrl,
-        issuerPublicKey: issuerDoc.publicKey
+        issuerPublicKey: issuerDoc.publicKey,
       };
 
-      // Store proof in Supabase database
-      setUploadStatus("Storing proof in database...");
-      const { error: proofError } = await supabase
-        .from('proofs')
-        .insert({
-          issuer_id: issuerId,
-          batch: batchName,
-          merkle_root: merkleRoot,
-          signature: signature,
-          proof_json: proofJson,
-          file_paths: selectedFiles.map(f => f.name),
-          description: descriptionEl?.value?.trim() || null,
-          expiry_date: expiryDateEl?.value || null,
-          created_at: new Date().toISOString()
-        });
+      // Prepare proof payload for PDF append
+      console.log('🧩 Preparing proof payload for PDF append...', {
+        issuerId,
+        batch: batchName,
+        merkleRoot,
+        fileCount: selectedFiles.length
+      });
+      setUploadStatus("Appending blockchain proof block to document(s)...");
 
-      if (proofError) {
-        throw new Error(`Failed to store proof: ${proofError.message}`);
+      const proofRecordBase = {
+        id: generateProofId(),
+        issuer_id: issuerId,
+        batch: batchName,
+        merkle_root: merkleRoot,
+        signature: signature,
+        proof_json: proofJson,
+        file_paths: selectedFiles.map(f => f.name),
+        description: descriptionEl?.value?.trim() || null,
+        expiry_date: expiryDateEl?.value || null,
+        created_at: issuedAt
+      };
+
+      const canonicalProof = canonicalProofString(proofRecordBase)
+      const proofDigest = ethers.keccak256(ethers.toUtf8Bytes(canonicalProof))
+      let proofSignature: string
+      if (issuerDoc.privateKey) {
+        const proofWallet = new ethers.Wallet(issuerDoc.privateKey)
+        proofSignature = await proofWallet.signMessage(ethers.getBytes(proofDigest))
+      } else {
+        throw new Error('Issuer private key not available for proof signing')
       }
 
-      setUploadStatus("Upload complete! Merkle root and proof/meta saved.");
+      const proofRecord: ProofPayload = {
+        ...proofRecordBase,
+        proof_signature: proofSignature
+      };
+      console.log('🧾 Proof record prepared for append:', proofRecord);
+
+      const issuedDocuments = await Promise.all(
+        selectedFiles.map((file, index) => {
+          console.log('📄 Processing file for proof append:', {
+            index,
+            name: file.name,
+            size: file.size
+          });
+          const originalBytes = fileByteArrays[index];
+          const augmentedBytes = appendProofBlock(originalBytes, proofRecord);
+          const tailSnippet = debugDecoder.decode(augmentedBytes.slice(-200));
+          console.log('✅ Proof block appended for file:', file.name, {
+            originalSize: originalBytes.byteLength,
+            augmentedSize: augmentedBytes.byteLength,
+            tailSnippet
+          });
+
+          const baseName = file.name.replace(/\.[^/.]+$/, "");
+          const docLabel =
+            uploadMode === "single"
+              ? baseName || `document-${index + 1}`
+              : `${batchName}_${index + 1}_${baseName || `document-${index + 1}`}`;
+
+          const sanitizedLabel = sanitizeForFileName(docLabel);
+          const outputName = sanitizedLabel.endsWith(".pdf")
+            ? sanitizedLabel
+            : `${sanitizedLabel}.pdf`;
+
+          return {
+            name: outputName,
+            bytes: augmentedBytes
+          };
+        })
+      );
+
+      // Deliver results to issuer & capture metadata
+      const batchLabel = sanitizeForFileName(batchName || documentName || `batch-${Date.now()}`);
+
+      if (issuedDocuments.length === 1) {
+        const singleDoc = issuedDocuments[0];
+        const blob = new Blob([singleDoc.bytes], { type: "application/pdf" });
+        downloadBlob(blob, singleDoc.name);
+        setUploadStatus("Issuance complete! Document downloaded with embedded proof.");
+        try {
+          await supabase
+            .from('issuer_documents')
+            .insert({
+              issuer_id: issuerId,
+              batch_name: batchName,
+              issue_mode: 'single',
+              merkle_root: merkleRoot,
+              document_names: [singleDoc.name],
+              files_count: 1,
+              issued_at: issuedAt
+            });
+        } catch (metaError: any) {
+          console.error('⚠️ Failed to store issuance metadata:', metaError);
+        }
+      } else {
+        setUploadStatus("Creating issued bundle...");
+        const zip = new JSZip();
+        issuedDocuments.forEach(doc => {
+          console.log('📦 Adding file to ZIP bundle:', {
+            name: doc.name,
+            size: doc.bytes.byteLength
+          });
+          zip.file(doc.name, doc.bytes);
+        });
+
+        const zipBlob = await zip.generateAsync({ type: "blob" });
+        const zipName = `${sanitizeForFileName(issuerId)}_${batchLabel}_${Date.now()}.zip`;
+        console.log('🎁 ZIP bundle ready:', {
+          zipName,
+          fileCount: issuedDocuments.length
+        });
+        downloadBlob(zipBlob, zipName);
+        setUploadStatus("Batch issuance complete! ZIP downloaded with embedded proofs.");
+
+        try {
+          await supabase
+            .from('issuer_documents')
+            .insert({
+              issuer_id: issuerId,
+              batch_name: batchName,
+              issue_mode: 'batch',
+              merkle_root: merkleRoot,
+              document_names: issuedDocuments.map(doc => doc.name),
+              files_count: issuedDocuments.length,
+              issued_at: issuedAt
+            });
+        } catch (metaError: any) {
+          console.error('⚠️ Failed to store issuance metadata:', metaError);
+        }
+      }
+
+      // Optional: trigger callback for dashboards
+      if (onUploadComplete) {
+        onUploadComplete();
+      }
+
+      // Navigate back after short delay so issuer can see status
+      setTimeout(() => {
+        navigate('/dashboard');
+      }, 2000);
       
       // Clear form
       setSelectedFiles([]);
       setBatch("");
       setDocumentName("");
-
-      if (onUploadComplete) {
-        onUploadComplete();
-      }
-
-      // Navigate to dashboard after successful upload (with delay to show success message)
-      setTimeout(() => {
-        window.location.href = '/dashboard';
-      }, 2000); // 2 second delay to show success message
 
     } catch (error) {
       console.error('Upload error:', error);
@@ -485,7 +627,7 @@ export const IssueDocument = ({ onUploadComplete }: IssueDocumentProps) => {
             <p className="text-red-700">You need to login as an issuer to upload documents.</p>
             <div className="mt-3">
               <Button 
-                onClick={() => window.location.href = '/#register'}
+                onClick={() => navigate('/')}
                 className="bg-red-600 hover:bg-red-700 text-white"
               >
                 Go to Login/Register

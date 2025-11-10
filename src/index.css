@@ -48,14 +48,16 @@
     --radius: 0.5rem;
     
     /* Gradients */
-    --gradient-hero: linear-gradient(135deg, hsl(var(--primary)), hsl(220 94% 58%));
+    --gradient-hero: linear-gradient(135deg, hsl(var(--primary)), hsl(268 88% 65%));
+    --gradient-primary: linear-gradient(135deg, hsl(223 92% 55%) 0%, hsl(268 88% 65%) 100%);
     --gradient-card: linear-gradient(145deg, hsl(0 0% 100%), hsl(220 14% 98%));
     
     /* Shadows */
     --shadow-sm: 0 1px 2px 0 hsl(0 0% 0% / 0.05);
     --shadow-md: 0 4px 6px -1px hsl(0 0% 0% / 0.1), 0 2px 4px -2px hsl(0 0% 0% / 0.1);
     --shadow-lg: 0 10px 15px -3px hsl(0 0% 0% / 0.1), 0 4px 6px -4px hsl(0 0% 0% / 0.1);
-    --shadow-card: 0 1px 3px 0 hsl(0 0% 0% / 0.1), 0 1px 2px -1px hsl(0 0% 0% / 0.1);
+    --shadow-card: 0 4px 24px hsl(223 92% 30% / 0.12);
+    --shadow-glow: 0 12px 40px hsl(223 92% 45% / 0.25);
     
     /* Animations */
     --animation-fade: opacity 0.3s ease-out;

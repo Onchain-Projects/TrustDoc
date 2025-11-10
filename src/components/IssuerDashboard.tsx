@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { useAuthContext } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
 import { ToastNotifications, useToasts } from "@/components/ui/toast-notifications";
+import type { Issuer, Owner } from "@/lib/supabase";
 
 interface Document {
   id: string;
@@ -24,8 +25,13 @@ interface IssuerDashboardProps {
   onNavigate?: (page: string) => void;
 }
 
+const isIssuerProfile = (profile: Issuer | Owner | null): profile is Issuer => {
+  return !!profile && 'issuerId' in profile;
+};
+
 export const IssuerDashboard = ({ onLogout, onNavigate }: IssuerDashboardProps) => {
   const { user, profile, signOut } = useAuthContext();
+  const issuerProfile = isIssuerProfile(profile) ? profile : null;
   const { toasts, removeToast, showSuccess, showError, showInfo } = useToasts();
   const [uploadedBatches, setUploadedBatches] = useState<Document[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
@@ -35,8 +41,10 @@ export const IssuerDashboard = ({ onLogout, onNavigate }: IssuerDashboardProps) 
   const [showDetailsModal, setShowDetailsModal] = useState(false);
 
   useEffect(() => {
-    fetchIssuerDocuments();
-  }, []);
+    if (issuerProfile?.issuerId) {
+      fetchIssuerDocuments();
+    }
+  }, [issuerProfile?.issuerId]);
 
   const handleLogout = async () => {
     try {
@@ -82,7 +90,7 @@ export const IssuerDashboard = ({ onLogout, onNavigate }: IssuerDashboardProps) 
           ],
           network: 'amoy',
           explorerUrl: doc.txHash ? `https://amoy.polygonscan.com/tx/${doc.txHash}` : null,
-          issuerPublicKey: profile?.publicKey || null
+          issuerPublicKey: issuerProfile?.publicKey || null
         }
       };
       
@@ -134,12 +142,12 @@ export const IssuerDashboard = ({ onLogout, onNavigate }: IssuerDashboardProps) 
     try {
       setIsLoadingDocuments(true);
       
-      if (!user || !profile?.issuerId) {
-        console.log('No user or issuerId found:', { user: !!user, issuerId: profile?.issuerId });
+      if (!user || !issuerProfile?.issuerId) {
+        console.log('No user or issuerId found:', { user: !!user, issuerId: issuerProfile?.issuerId });
         return;
       }
 
-      console.log('Fetching documents for issuer:', profile.issuerId);
+      console.log('Fetching documents for issuer:', issuerProfile.issuerId);
 
       // Add retry logic for network issues
       let proofs, error;
@@ -147,14 +155,14 @@ export const IssuerDashboard = ({ onLogout, onNavigate }: IssuerDashboardProps) 
       
       while (retries > 0) {
         try {
-          const result = await supabase
-            .from('proofs')
-            .select('*')
-            .eq('issuer_id', profile.issuerId)
-            .order('created_at', { ascending: false });
-          
-          proofs = result.data;
-          error = result.error;
+      const result = await supabase
+        .from('issuer_documents')
+        .select('*')
+        .eq('issuer_id', issuerProfile.issuerId)
+        .order('issued_at', { ascending: false });
+      
+      proofs = result.data;
+      error = result.error;
           break; // Success, exit retry loop
         } catch (networkError) {
           console.log(`Network error, retries left: ${retries - 1}`, networkError);
@@ -174,17 +182,17 @@ export const IssuerDashboard = ({ onLogout, onNavigate }: IssuerDashboardProps) 
 
       console.log('Fetched documents:', proofs);
 
-      const documents: Document[] = (proofs || []).map(proof => ({
-        id: proof.id,
-        batch: proof.batch || 'Unknown',
-        merkleRoot: proof.merkle_root,
-        files: proof.proof_json?.proofs?.[0]?.files || [],
-        filePaths: proof.file_paths || [],
-        status: proof.status === 'valid' ? 'uploaded' : 'failed',
-        timestamp: proof.created_at,
-        txHash: proof.proof_json?.explorerUrl ? proof.proof_json.explorerUrl.split('/').pop() : null,
-        signature: proof.signature,
-        proofJson: proof.proof_json
+      const documents: Document[] = (proofs || []).map((record: any) => ({
+        id: record.id,
+        batch: record.batch_name || 'Unknown',
+        merkleRoot: record.merkle_root,
+        files: Array.isArray(record.document_names) ? record.document_names : [],
+        filePaths: [],
+        status: 'uploaded',
+        timestamp: record.issued_at,
+        txHash: null,
+        signature: null,
+        proofJson: null
       }));
 
       setUploadedBatches(documents);
@@ -228,6 +236,22 @@ export const IssuerDashboard = ({ onLogout, onNavigate }: IssuerDashboardProps) 
     return matchesSearch && matchesTab;
   });
 
+  if (!issuerProfile) {
+    return (
+      <main className="flex-grow">
+        <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
+          <div className="max-w-md text-center space-y-4">
+            <h2 className="text-2xl font-semibold text-gray-900">Issuer account required</h2>
+            <p className="text-sm text-gray-600">
+              This dashboard is only available for issuer accounts. Please sign in as an issuer or contact support if you believe this is an error.
+            </p>
+            <Button onClick={handleLogout}>Return to Home</Button>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="flex-grow">
       <div className="bg-gray-50 min-h-screen">
@@ -245,7 +269,7 @@ export const IssuerDashboard = ({ onLogout, onNavigate }: IssuerDashboardProps) 
                 </div>
                 <div className="mt-2 flex items-center text-sm text-gray-500">
                   <span className="font-medium text-gray-800 mr-1">ID:</span>
-                  <span>{profile?.issuerId || "Not set"}</span>
+                  <span>{issuerProfile?.issuerId || "Not set"}</span>
                 </div>
               </div>
             </div>
@@ -415,8 +439,8 @@ export const IssuerDashboard = ({ onLogout, onNavigate }: IssuerDashboardProps) 
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            if (profile?.issuerId) {
-                              handleDownloadProof(profile.issuerId, batch.batch);
+                            if (issuerProfile?.issuerId) {
+                              handleDownloadProof(issuerProfile.issuerId, batch.batch);
                             }
                           }}
                           className="h-6 w-6 p-0 text-gray-400 hover:text-blue-500 bg-transparent border-none cursor-pointer flex items-center justify-center"
@@ -470,7 +494,7 @@ export const IssuerDashboard = ({ onLogout, onNavigate }: IssuerDashboardProps) 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Issuer ID</label>
-                      <p className="text-sm text-gray-900 mt-1">{profile?.issuerId || 'N/A'}</p>
+                      <p className="text-sm text-gray-900 mt-1">{issuerProfile?.issuerId || 'N/A'}</p>
                     </div>
                     <div>
                       <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Batch</label>
@@ -559,8 +583,8 @@ export const IssuerDashboard = ({ onLogout, onNavigate }: IssuerDashboardProps) 
               </Button>
               <Button
                 onClick={() => {
-                  if (profile?.issuerId) {
-                    handleDownloadProof(profile.issuerId, selectedBatch.batch);
+                  if (issuerProfile?.issuerId) {
+                    handleDownloadProof(issuerProfile.issuerId, selectedBatch.batch);
                   }
                   setShowDetailsModal(false);
                 }}
