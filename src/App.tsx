@@ -6,7 +6,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import Index from "./pages/Index";
 import { IssueDocumentPage } from "./pages/IssueDocumentPage";
-import { VerifyDoc } from "./components/VerifyDoc";
+import VerifyPage from "./pages/VerifyPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import DashboardPage from "./pages/DashboardPage";
 import NotFound from "./pages/NotFound";
@@ -23,7 +23,7 @@ const App = () => (
           <Routes>
             <Route path="/" element={<Index />} />
             <Route path="/issue" element={<IssueDocumentPage />} />
-            <Route path="/verify" element={<VerifyDoc />} />
+            <Route path="/verify" element={<VerifyPage />} />
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/profile" element={<ProfilePage />} />
             <Route path="*" element={<NotFound />} />

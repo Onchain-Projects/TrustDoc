@@ -137,6 +137,22 @@
     animation: fade-in-slide-up 0.6s ease-out;
   }
   
+  .gradient-text {
+    display: inline-flex;
+    align-items: center;
+    background-image: var(--gradient-primary);
+    background-size: 100% 140%;
+    background-position: center top;
+    background-repeat: no-repeat;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+    text-fill-color: transparent;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  
   /* Button Animations */
   .btn-primary {
     transition: all 0.2s ease-out;

@@ -537,61 +537,45 @@ export const IssueDocument = ({ onUploadComplete }: IssueDocumentProps) => {
       // Deliver results to issuer & capture metadata
       const batchLabel = sanitizeForFileName(batchName || documentName || `batch-${Date.now()}`);
 
-      if (issuedDocuments.length === 1) {
-        const singleDoc = issuedDocuments[0];
-        const blob = new Blob([singleDoc.bytes], { type: "application/pdf" });
-        downloadBlob(blob, singleDoc.name);
-        setUploadStatus("Issuance complete! Document downloaded with embedded proof.");
-        try {
-          await supabase
-            .from('issuer_documents')
-            .insert({
-              issuer_id: issuerId,
-              batch_name: batchName,
-              issue_mode: 'single',
-              merkle_root: merkleRoot,
-              document_names: [singleDoc.name],
-              files_count: 1,
-              issued_at: issuedAt
-            });
-        } catch (metaError: any) {
-          console.error('⚠️ Failed to store issuance metadata:', metaError);
-        }
-      } else {
-        setUploadStatus("Creating issued bundle...");
-        const zip = new JSZip();
-        issuedDocuments.forEach(doc => {
-          console.log('📦 Adding file to ZIP bundle:', {
-            name: doc.name,
-            size: doc.bytes.byteLength
+      const isSingleDocument = issuedDocuments.length === 1;
+
+      setUploadStatus(isSingleDocument ? "Preparing issued document bundle..." : "Creating issued bundle...");
+      const zip = new JSZip();
+      issuedDocuments.forEach(doc => {
+        console.log('📦 Adding file to ZIP bundle:', {
+          name: doc.name,
+          size: doc.bytes.byteLength
+        });
+        zip.file(doc.name, doc.bytes);
+      });
+
+      const zipBlob = await zip.generateAsync({ type: "blob" });
+      const zipName = `${sanitizeForFileName(issuerId)}_${batchLabel}_${Date.now()}.zip`;
+      console.log('🎁 ZIP bundle ready:', {
+        zipName,
+        fileCount: issuedDocuments.length
+      });
+      downloadBlob(zipBlob, zipName);
+      setUploadStatus(
+        isSingleDocument
+          ? "Issuance complete! ZIP downloaded with embedded proof."
+          : "Batch issuance complete! ZIP downloaded with embedded proofs."
+      );
+
+      try {
+        await supabase
+          .from('issuer_documents')
+          .insert({
+            issuer_id: issuerId,
+            batch_name: batchName,
+            issue_mode: isSingleDocument ? 'single' : 'batch',
+            merkle_root: merkleRoot,
+            document_names: issuedDocuments.map(doc => doc.name),
+            files_count: issuedDocuments.length,
+            issued_at: issuedAt
           });
-          zip.file(doc.name, doc.bytes);
-        });
-
-        const zipBlob = await zip.generateAsync({ type: "blob" });
-        const zipName = `${sanitizeForFileName(issuerId)}_${batchLabel}_${Date.now()}.zip`;
-        console.log('🎁 ZIP bundle ready:', {
-          zipName,
-          fileCount: issuedDocuments.length
-        });
-        downloadBlob(zipBlob, zipName);
-        setUploadStatus("Batch issuance complete! ZIP downloaded with embedded proofs.");
-
-        try {
-          await supabase
-            .from('issuer_documents')
-            .insert({
-              issuer_id: issuerId,
-              batch_name: batchName,
-              issue_mode: 'batch',
-              merkle_root: merkleRoot,
-              document_names: issuedDocuments.map(doc => doc.name),
-              files_count: issuedDocuments.length,
-              issued_at: issuedAt
-            });
-        } catch (metaError: any) {
-          console.error('⚠️ Failed to store issuance metadata:', metaError);
-        }
+      } catch (metaError: any) {
+        console.error('⚠️ Failed to store issuance metadata:', metaError);
       }
 
       // Optional: trigger callback for dashboards

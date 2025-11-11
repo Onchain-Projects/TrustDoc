@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
 import { HomePage } from "@/pages/HomePage";
@@ -11,9 +11,14 @@ import { ProfilePage } from "@/pages/ProfilePage";
 import { UploadModal } from "@/components/ui/upload-modal";
 import { ToastNotifications, useToasts } from "@/components/ui/toast-notifications";
 import { useAuthContext } from "@/contexts/AuthContext";
+import { useLocation, useNavigate } from "react-router-dom";
 
 const Index = () => {
-  const [currentPage, setCurrentPage] = useState('home');
+  const location = useLocation();
+  const navigate = useNavigate();
+  const locationState = location.state as { page?: string } | null;
+
+  const [currentPage, setCurrentPage] = useState(locationState?.page ?? 'home');
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [uploadStage, setUploadStage] = useState<'building' | 'anchoring' | 'complete'>('building');
   const { toasts, removeToast, showSuccess, showError, showInfo } = useToasts();
@@ -129,6 +134,14 @@ const Index = () => {
         return <HomePage onNavigate={handleNavigation} />;
     }
   };
+
+  useEffect(() => {
+    const nextPage = locationState?.page;
+    if (nextPage && nextPage !== currentPage) {
+      setCurrentPage(nextPage);
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [locationState?.page, currentPage, navigate, location.pathname]);
 
   // Show loading state while authentication is being checked
   if (authLoading) {
