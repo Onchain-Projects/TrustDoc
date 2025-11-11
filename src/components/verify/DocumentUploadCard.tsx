@@ -53,10 +53,13 @@ export const DocumentUploadCard = ({
   };
 
   const handleFile = (file: File) => {
-    const allowedTypes = ["application/pdf"];
+    const allowedTypes = [
+      "application/pdf",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    ];
 
     if (!allowedTypes.includes(file.type)) {
-      toast.error("Unsupported file type. Please upload a PDF file.");
+      toast.error("Unsupported file type. Please upload a PDF or DOCX file.");
       return;
     }
 
@@ -118,7 +121,7 @@ export const DocumentUploadCard = ({
           type="file"
           className="hidden"
           onChange={handleFileInput}
-          accept=".pdf"
+          accept=".pdf,.docx"
         />
         <div className="flex flex-col items-center gap-4">
           <div
@@ -134,7 +137,7 @@ export const DocumentUploadCard = ({
               <span className="text-primary">Upload a document</span> or drag
               and drop
             </p>
-            <p className="text-sm text-muted-foreground">PDF</p>
+            <p className="text-sm text-muted-foreground">PDF or DOCX</p>
           </div>
         </div>
       </label>

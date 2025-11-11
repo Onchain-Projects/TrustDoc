@@ -8,6 +8,14 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useAuthContext } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
 import { appendProofBlock, canonicalProofString, type ProofPayload } from "@/lib/pdf-proof";
+import { appendProofToDocx, prepareDocxForHashing, canonicalizeDocxForHash } from "@/lib/docx-proof";
+type PreparedFile = {
+  file: File
+  bytes: Uint8Array
+  hashBytes: Uint8Array
+  kind: 'docx' | 'other'
+}
+
 import JSZip from "jszip";
 import { getContractInstance } from "@/lib/blockchain/contract";
 import { ethers } from "ethers";
@@ -181,17 +189,62 @@ export const IssueDocument = ({ onUploadComplete }: IssueDocumentProps) => {
       setUploadStatus("Processing files...");
       
       // Read files into memory once
-      const fileByteArrays = await Promise.all(
-        selectedFiles.map(async (file) => new Uint8Array(await file.arrayBuffer()))
+      const preparedFiles: PreparedFile[] = await Promise.all(
+        selectedFiles.map(async (file) => {
+          const arrayBuffer = await file.arrayBuffer()
+          const rawBytes = new Uint8Array(arrayBuffer)
+          const isDocx = file.name.toLowerCase().endsWith('.docx')
+          console.log('🧱 Preparing file for hashing:', {
+            name: file.name,
+            size: file.size,
+            isDocx
+          })
+          if (isDocx) {
+            const normalizedDocx = await prepareDocxForHashing(rawBytes)
+            const hashBytes = await canonicalizeDocxForHash(normalizedDocx)
+            console.log('🧱 Prepared DOCX bytes length:', {
+              name: file.name,
+              preparedLength: normalizedDocx.length,
+              hashSourceLength: hashBytes.length
+            })
+            return {
+              file,
+              bytes: normalizedDocx,
+              hashBytes,
+              kind: 'docx'
+            }
+          }
+
+          console.log('🧱 Prepared non-DOCX bytes length:', {
+            name: file.name,
+            preparedLength: rawBytes.length
+          })
+
+          return {
+            file,
+            bytes: rawBytes,
+            hashBytes: rawBytes,
+            kind: 'other'
+          }
+        })
       );
 
       // Generate file hashes for Merkle tree from original bytes
-      const fileHashes = fileByteArrays.map((data) => {
+      const fileHashes = preparedFiles.map(({ hashBytes: data }) => {
         const hexString = '0x' + Array.from(data).map(b => b.toString(16).padStart(2, '0')).join('');
         return ethers.keccak256(hexString);
       });
 
       console.log('🔍 File hashes generated:', fileHashes);
+      preparedFiles.forEach(({ file, bytes, hashBytes }, idx) => {
+        console.log('🔍 File hash detail:', {
+          index: idx,
+          name: file.name,
+          byteLength: bytes.length,
+          hashSourceLength: hashBytes.length,
+          hash: fileHashes[idx]
+        })
+      })
 
       // Create Merkle root using EXACT method from real working TrustDoc
       // Real working TrustDoc uses merkletreejs + sha256 + sortPairs: true
@@ -455,7 +508,7 @@ export const IssueDocument = ({ onUploadComplete }: IssueDocumentProps) => {
           proofs: proofs, // Array of arrays - Merkle proofs for each leaf
           signature: signature,
           timestamp: issuedAt,
-          fileLengths: fileByteArrays.map(bytes => bytes.length)
+          fileLengths: preparedFiles.map(({ bytes }) => bytes.length)
         }],
         network: 'amoy',
         explorerUrl: explorerUrl,
@@ -501,20 +554,30 @@ export const IssueDocument = ({ onUploadComplete }: IssueDocumentProps) => {
       console.log('🧾 Proof record prepared for append:', proofRecord);
 
       const issuedDocuments = await Promise.all(
-        selectedFiles.map((file, index) => {
+        preparedFiles.map(async ({ file, bytes, kind }, index) => {
           console.log('📄 Processing file for proof append:', {
             index,
             name: file.name,
             size: file.size
           });
-          const originalBytes = fileByteArrays[index];
-          const augmentedBytes = appendProofBlock(originalBytes, proofRecord);
-          const tailSnippet = debugDecoder.decode(augmentedBytes.slice(-200));
-          console.log('✅ Proof block appended for file:', file.name, {
-            originalSize: originalBytes.byteLength,
-            augmentedSize: augmentedBytes.byteLength,
-            tailSnippet
-          });
+          const augmentedBytes =
+            kind === 'docx'
+              ? await appendProofToDocx(bytes, proofRecord)
+              : appendProofBlock(bytes, proofRecord);
+          if (kind !== 'docx') {
+            const tailSnippet = debugDecoder.decode(augmentedBytes.slice(-200));
+            console.log('✅ Proof block appended for file:', file.name, {
+              originalSize: bytes.byteLength,
+              augmentedSize: augmentedBytes.byteLength,
+              tailSnippet
+            });
+          } else {
+            console.log('✅ Proof embedded into DOCX package:', {
+              originalSize: bytes.byteLength,
+              augmentedSize: augmentedBytes.byteLength,
+              proofPart: 'customXml/trustdoc-proof.json'
+            });
+          }
 
           const baseName = file.name.replace(/\.[^/.]+$/, "");
           const docLabel =
@@ -523,9 +586,9 @@ export const IssueDocument = ({ onUploadComplete }: IssueDocumentProps) => {
               : `${batchName}_${index + 1}_${baseName || `document-${index + 1}`}`;
 
           const sanitizedLabel = sanitizeForFileName(docLabel);
-          const outputName = sanitizedLabel.endsWith(".pdf")
-            ? sanitizedLabel
-            : `${sanitizedLabel}.pdf`;
+          const extensionMatch = file.name.match(/\.([^.]+)$/);
+          const extension = extensionMatch ? extensionMatch[1] : "pdf";
+          const outputName = `${sanitizedLabel}.${extension}`;
 
           return {
             name: outputName,

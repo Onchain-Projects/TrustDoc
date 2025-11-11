@@ -1,7 +1,8 @@
 import { ethers } from 'ethers'
 import { MerkleTree } from 'merkletreejs'
 import { supabase } from './supabase'
-import { extractProofBlock, canonicalProofString } from './pdf-proof'
+import { extractProofBlock, canonicalProofString, type ProofPayload } from './pdf-proof'
+import { extractProofFromDocx, canonicalizeDocxForHash } from './docx-proof'
 import { CONTRACT_CONFIG, TRUSTDOC_ABI } from './blockchain/contract'
 import { sha256 } from 'js-sha256'
 
@@ -56,8 +57,44 @@ export async function verifyDocument(file: File): Promise<VerificationResult> {
   try {
     // STEP 1: Load PDF and extract embedded proof
     const fileBuffer = await file.arrayBuffer()
-    const pdfBytes = new Uint8Array(fileBuffer)
-    const { originalBytes, proof } = extractProofBlock(pdfBytes)
+    const fileBytes = new Uint8Array(fileBuffer)
+    const lowerName = file.name.toLowerCase()
+    console.log('📂 Verification file info:', {
+      name: file.name,
+      size: file.size,
+      detectedDocx: lowerName.endsWith('.docx')
+    })
+
+    let originalBytes: Uint8Array
+    let hashSourceBytes: Uint8Array
+    const isDocx = lowerName.endsWith('.docx')
+    let proof: ProofPayload
+
+    if (isDocx) {
+      console.log('📂 Detected DOCX file, extracting proof via docx-proof helper')
+      const docxResult = await extractProofFromDocx(fileBytes)
+      originalBytes = docxResult.originalBytes
+      proof = docxResult.proof
+      hashSourceBytes = await canonicalizeDocxForHash(originalBytes)
+      console.log('📂 DOCX extraction result:', {
+        originalLength: originalBytes.length,
+        hashSourceLength: hashSourceBytes.length,
+        proofBatch: proof.batch,
+        proofIssuer: proof.issuer_id
+      })
+    } else {
+      console.log('📂 Treating file as PDF for verification')
+      const pdfResult = extractProofBlock(fileBytes)
+      originalBytes = pdfResult.originalBytes
+      proof = pdfResult.proof
+      hashSourceBytes = originalBytes
+      console.log('📂 PDF extraction result:', {
+        originalLength: originalBytes.length,
+        hashSourceLength: hashSourceBytes.length,
+        proofBatch: proof.batch,
+        proofIssuer: proof.issuer_id
+      })
+    }
     const proofJson = proof.proof_json
 
     if (!proofJson || !Array.isArray(proofJson.proofs) || proofJson.proofs.length === 0) {
@@ -127,8 +164,9 @@ export async function verifyDocument(file: File): Promise<VerificationResult> {
 
     // STEP 2: Hash file with keccak256 (matches Real TrustDoc line 131)
     console.log('🔍 Extracted original bytes length:', originalBytes.length)
+    console.log('🔍 Hash source bytes length:', hashSourceBytes.length)
 
-    let workingBytes = originalBytes
+    let workingBytes = hashSourceBytes
     const computeHash = (bytes: Uint8Array) => {
       const hex = '0x' + Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('')
       return normalizeHash(ethers.keccak256(hex))
@@ -141,7 +179,7 @@ export async function verifyDocument(file: File): Promise<VerificationResult> {
     console.log('📄 Stored leaves (normalized):', normalizedLeaves)
     let matchingIndex = normalizedLeaves.indexOf(normalizedDocHash)
 
-    if (matchingIndex === -1 && workingBytes.length > 0 && workingBytes[workingBytes.length - 1] === 0x0a) {
+    if (!isDocx && matchingIndex === -1 && workingBytes.length > 0 && workingBytes[workingBytes.length - 1] === 0x0a) {
       console.log('📄 Attempting to trim trailing newline for hash comparison...')
       const trimmed = workingBytes.slice(0, workingBytes.length - 1)
       const trimmedHash = computeHash(trimmed)
