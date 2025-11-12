@@ -9,6 +9,7 @@ import { useAuthContext } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
 import { appendProofBlock, canonicalProofString, type ProofPayload } from "@/lib/pdf-proof";
 import { appendProofToDocx, prepareDocxForHashing, canonicalizeDocxForHash } from "@/lib/docx-proof";
+import { embedBadgeInPdf, embedBadgeInDocx } from "@/lib/document-qr";
 type PreparedFile = {
   file: File
   bytes: Uint8Array
@@ -190,17 +191,43 @@ export const IssueDocument = ({ onUploadComplete }: IssueDocumentProps) => {
       
       // Read files into memory once
       const preparedFiles: PreparedFile[] = await Promise.all(
-        selectedFiles.map(async (file) => {
+        selectedFiles.map(async (file, index) => {
           const arrayBuffer = await file.arrayBuffer()
           const rawBytes = new Uint8Array(arrayBuffer)
           const isDocx = file.name.toLowerCase().endsWith('.docx')
           console.log('🧱 Preparing file for hashing:', {
             name: file.name,
             size: file.size,
+            index,
             isDocx
           })
+
+          const badgeOptions = {
+            verificationUrl: 'https://trust-doc.vercel.app/verify',
+            title: 'Verify this document with TrustDoc',
+            captionLines: [
+              'Blockchain-authenticated credential.',
+              'Scan to open trust-doc.vercel.app/verify,',
+              'then upload this file to confirm it matches the immutable record.'
+            ],
+            qrSizeInches: 1.1
+          }
+
+          let bytesWithBadge = rawBytes
+          try {
+            bytesWithBadge = isDocx
+              ? await embedBadgeInDocx(rawBytes, badgeOptions)
+              : await embedBadgeInPdf(rawBytes, badgeOptions)
+          } catch (badgeError) {
+            console.error('⚠️ Failed to embed verification badge:', {
+              name: file.name,
+              error: badgeError
+            })
+            bytesWithBadge = rawBytes
+          }
+
           if (isDocx) {
-            const normalizedDocx = await prepareDocxForHashing(rawBytes)
+            const normalizedDocx = await prepareDocxForHashing(bytesWithBadge)
             const hashBytes = await canonicalizeDocxForHash(normalizedDocx)
             console.log('🧱 Prepared DOCX bytes length:', {
               name: file.name,
@@ -217,13 +244,13 @@ export const IssueDocument = ({ onUploadComplete }: IssueDocumentProps) => {
 
           console.log('🧱 Prepared non-DOCX bytes length:', {
             name: file.name,
-            preparedLength: rawBytes.length
+            preparedLength: bytesWithBadge.length
           })
 
           return {
             file,
-            bytes: rawBytes,
-            hashBytes: rawBytes,
+            bytes: bytesWithBadge,
+            hashBytes: bytesWithBadge,
             kind: 'other'
           }
         })
