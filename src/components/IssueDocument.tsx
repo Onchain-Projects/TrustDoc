@@ -295,7 +295,7 @@ export const IssueDocument = ({ onUploadComplete }: IssueDocumentProps) => {
       console.log('🔍 Merkle root generated:', merkleRoot);
 
       // 2. Get contract instance (like working TrustDoc - MetaMask will pop up automatically)
-      const provider = new ethers.BrowserProvider(window.ethereum);
+      let provider = new ethers.BrowserProvider(window.ethereum);
       let signer;
       try {
         signer = await provider.getSigner();
@@ -335,9 +335,9 @@ export const IssueDocument = ({ onUploadComplete }: IssueDocumentProps) => {
         console.log('Network switched to Polygon Amoy');
         
         // Recreate provider and contract after network switch
-        const newProvider = new ethers.BrowserProvider(window.ethereum);
-        const newSigner = await newProvider.getSigner();
-        const newContract = new ethers.Contract(contractAddress, ABI.abi, newSigner);
+        provider = new ethers.BrowserProvider(window.ethereum);
+        signer = await provider.getSigner();
+        const newContract = new ethers.Contract(contractAddress, ABI.abi, signer);
         
       // 3. Check if Merkle root already exists on-chain (like working TrustDoc)
       setUploadStatus("Checking if document already exists...");
@@ -354,7 +354,7 @@ export const IssueDocument = ({ onUploadComplete }: IssueDocumentProps) => {
 
       // Preflight: ensure signer is authorized worker on this contract
       try {
-        const currentAddr = await newSigner.getAddress();
+        const currentAddr = await signer.getAddress();
         const isWorker = await newContract.isWorker(currentAddr);
         if (!isWorker) {
           throw new Error('Wallet permission error: Your wallet is not authorized (not a worker) on this contract.');
@@ -430,46 +430,101 @@ export const IssueDocument = ({ onUploadComplete }: IssueDocumentProps) => {
       setUploadStatus("Storing on blockchain...");
       
       let tx;
-      try {
-        // Estimate gas first
-        const gasEstimate = await contract.putRoot.estimateGas(merkleRoot);
-        console.log('Gas estimate:', gasEstimate.toString());
-        
-        // Add 20% buffer to gas estimate
-        const gasWithBuffer = gasEstimate * 120n / 100n;
-        
-        tx = await contract.putRoot(merkleRoot, {
-          gasLimit: gasWithBuffer
-        });
-        
-        console.log('Transaction sent:', tx.hash);
-        setUploadStatus(`Transaction sent: ${tx.hash}. Waiting for confirmation...`);
-        
-        const receipt = await tx.wait();
-        console.log('Transaction confirmed:', receipt);
-        
-      } catch (txError) {
-        console.error('Transaction error:', txError);
-        
-        // Check for specific error types and provide user-friendly messages
-        if (txError.message && txError.message.includes('Root already exists')) {
-          throw new Error('This document batch has already been uploaded to the blockchain. Please use different files or batch name.');
-        } else if (txError.message && txError.message.includes('Only worker can call this')) {
-          throw new Error('Wallet permission error: Your wallet is not authorized to perform this transaction.');
-        } else if (txError.code === 'UNKNOWN_ERROR' && txError.message && txError.message.includes('Internal JSON-RPC error')) {
-          throw new Error('Blockchain network error: The transaction may have failed due to network issues or duplicate data. Please try again with different files.');
-        } else if (txError.code === 'ACTION_REJECTED' || 
-                   (txError.message && txError.message.includes('User denied')) ||
-                   (txError.message && txError.message.includes('user rejected'))) {
-          throw new Error('Transaction cancelled: You rejected the transaction in MetaMask. Please try again and confirm the transaction to proceed.');
-        } else if (txError.message && txError.message.includes('insufficient funds')) {
-          throw new Error('Insufficient funds: You don\'t have enough MATIC tokens to complete this transaction. Please add some MATIC to your wallet.');
-        } else if (txError.message && txError.message.includes('network')) {
-          throw new Error('Network error: Please check your internet connection and try again.');
+      const maxRetries = 3;
+      let lastError: any = null;
+      
+      for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+          // CRITICAL FIX: Get proper nonce to prevent nonce conflicts
+          // This is the root cause of "Internal JSON-RPC error" (-32603)
+          const walletAddress = await signer.getAddress();
+          const latestNonce = await provider.getTransactionCount(walletAddress, 'latest');
+          const pendingNonce = await provider.getTransactionCount(walletAddress, 'pending');
+          
+          console.log('📊 Nonce information:', {
+            latest: latestNonce,
+            pending: pendingNonce,
+            hasPending: pendingNonce > latestNonce,
+            willUse: pendingNonce,
+            attempt: attempt + 1
+          });
+          
+          // Estimate gas first
+          const gasEstimate = await contract.putRoot.estimateGas(merkleRoot);
+          console.log('Gas estimate:', gasEstimate.toString());
+          
+          // Add 20% buffer to gas estimate
+          const gasWithBuffer = gasEstimate * 120n / 100n;
+          
+          // CRITICAL FIX: Use pending nonce to queue behind any pending transactions
+          // This prevents nonce conflicts that cause "Internal JSON-RPC error"
+          tx = await contract.putRoot(merkleRoot, {
+            gasLimit: gasWithBuffer,
+            nonce: pendingNonce  // Explicitly set nonce to prevent conflicts
+          });
+          
+          console.log('✅ Transaction sent:', tx.hash);
+          console.log('📊 Transaction details:', {
+            hash: tx.hash,
+            nonce: tx.nonce,
+            gasLimit: gasWithBuffer.toString()
+          });
+          setUploadStatus(`Transaction sent: ${tx.hash}. Waiting for confirmation...`);
+          
+          const receipt = await tx.wait();
+          console.log('✅ Transaction confirmed:', receipt);
+          break; // Success, exit retry loop
+          
+        } catch (txError: any) {
+          lastError = txError;
+          console.error(`❌ Transaction attempt ${attempt + 1}/${maxRetries} failed:`, txError);
+          
+          // Check for specific error types
+          if (txError.message && txError.message.includes('Root already exists')) {
+            throw new Error('This document batch has already been uploaded to the blockchain. Please use different files or batch name.');
+          } else if (txError.message && txError.message.includes('Only worker can call this')) {
+            throw new Error('Wallet permission error: Your wallet is not authorized to perform this transaction.');
+          } else if (txError.code === 'ACTION_REJECTED' || 
+                     (txError.message && txError.message.includes('User denied')) ||
+                     (txError.message && txError.message.includes('user rejected'))) {
+            throw new Error('Transaction cancelled: You rejected the transaction in MetaMask. Please try again and confirm the transaction to proceed.');
+          } else if (txError.message && txError.message.includes('insufficient funds')) {
+            throw new Error('Insufficient funds: You don\'t have enough MATIC tokens to complete this transaction. Please add some MATIC to your wallet.');
+          }
+          
+          // For retryable errors (RPC errors, nonce conflicts), wait and retry
+          const isRetryableError = 
+            txError.code === 'UNKNOWN_ERROR' ||
+            (txError.message && txError.message.includes('Internal JSON-RPC error')) ||
+            (txError.message && txError.message.includes('nonce')) ||
+            (txError.message && txError.message.includes('replacement transaction underpriced')) ||
+            (txError.message && txError.message.includes('already known'));
+          
+          if (isRetryableError && attempt < maxRetries - 1) {
+            // Exponential backoff: wait longer between retries
+            const waitTime = 1000 * Math.pow(2, attempt); // 1s, 2s, 4s
+            console.log(`⏳ Retryable error detected. Waiting ${waitTime}ms before retry...`);
+            setUploadStatus(`Transaction failed (attempt ${attempt + 1}/${maxRetries}). Retrying in ${waitTime/1000}s...`);
+            await new Promise(resolve => setTimeout(resolve, waitTime));
+            continue; // Retry
+          }
+          
+          // Non-retryable error or last attempt failed
+          if (attempt === maxRetries - 1) {
+            // Final attempt failed, throw with detailed error
+            if (txError.code === 'UNKNOWN_ERROR' && txError.message && txError.message.includes('Internal JSON-RPC error')) {
+              throw new Error('Blockchain network error: The transaction failed after multiple attempts. This may be due to network congestion or nonce conflicts. Please wait a moment and try again.');
+            } else if (txError.message && txError.message.includes('network')) {
+              throw new Error('Network error: Please check your internet connection and try again.');
+            }
+            throw new Error(`Transaction failed after ${maxRetries} attempts: ${txError.message || 'Unknown error'}. Please try again.`);
+          }
         }
-        
-        // Generic error with simplified message
-        throw new Error('Transaction failed: Please try again. If the problem persists, check your MetaMask connection and wallet balance.');
+      }
+      
+      // If we get here without a transaction, something went wrong
+      if (!tx) {
+        throw new Error(`Transaction failed after ${maxRetries} attempts: ${lastError?.message || 'Unknown error'}`);
       }
 
       // 5. Sign and store proof (MATCHING WORKING BACKEND LOGIC)
